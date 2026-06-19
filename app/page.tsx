@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 export default function UploadPage() {
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
-  const [results, setResults] = useState<{ name: string; id?: string; error?: string }[]>([])
+  const [results, setResults] = useState<{ name: string; id?: string; error?: string; duplicateId?: string }[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
@@ -29,6 +29,8 @@ export default function UploadPage() {
         const json = await res.json()
         if (json.uploadId) {
           out.push({ name: file.name, id: json.uploadId })
+        } else if (json.duplicateUploadId) {
+          out.push({ name: file.name, error: json.error, duplicateId: json.duplicateUploadId })
         } else {
           const msg = [json.error, json.detail].filter(Boolean).join(': ')
           out.push({ name: file.name, error: msg || 'Unknown error' })
@@ -99,7 +101,14 @@ export default function UploadPage() {
               key={i}
               className={`rounded-lg px-4 py-3 text-sm ${r.error ? 'bg-red-50 border border-red-200 text-red-700' : 'bg-green-50 border border-green-200 text-green-800'}`}
             >
-              {r.error ? (
+              {r.duplicateId ? (
+                <p>
+                  <strong>{r.name}</strong>: {r.error}{' '}
+                  <button className="underline font-semibold" onClick={() => router.push(`/reports/${r.duplicateId}`)}>
+                    View existing report →
+                  </button>
+                </p>
+              ) : r.error ? (
                 <p><strong>{r.name}</strong>: {r.error}</p>
               ) : (
                 <p>

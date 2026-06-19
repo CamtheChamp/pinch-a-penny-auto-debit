@@ -24,6 +24,23 @@ export async function POST(req: NextRequest) {
 
   const parsed = parseReport(rawText)
 
+  // Duplicate check — reject if this report number is already in the DB
+  if (parsed.header?.reportNumber) {
+    const { data: existing } = await db
+      .from('report_headers')
+      .select('upload_id')
+      .eq('report_number', parsed.header.reportNumber)
+      .eq('run_date', parsed.header.runDate)
+      .limit(1)
+      .single()
+    if (existing) {
+      return Response.json({
+        error: `Report ${parsed.header.reportNumber} (run ${parsed.header.runDate}) has already been uploaded.`,
+        duplicateUploadId: existing.upload_id,
+      }, { status: 409 })
+    }
+  }
+
   // Detect carry-forward prerequisite date from any RU row
   const cfItem = parsed.lineItems.find((i) => i.isCarryForward && i.priorReportDate)
   const prerequisiteDate = cfItem?.priorReportDate ?? null
