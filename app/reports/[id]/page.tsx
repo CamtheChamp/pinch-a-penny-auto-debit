@@ -92,6 +92,91 @@ function fmt(n: number | null): string {
   return n < 0 ? `-$${s}` : `$${s}`
 }
 
+function JePreviewTable({ preview, fmt }: { preview: Record<string, unknown>; fmt: (n: number | null) => string }) {
+  const lines = preview.Line as Array<Record<string, unknown>>
+  const s = preview._summary as Record<string, unknown> | undefined
+
+  const totals = lines.reduce<{ debits: number; credits: number }>((acc, line) => {
+    const detail = line.JournalEntryLineDetail as Record<string, unknown>
+    const amount = line.Amount as number
+    if ((detail?.PostingType as string) === 'Debit') acc.debits += amount
+    else acc.credits += amount
+    return acc
+  }, { debits: 0, credits: 0 })
+
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between text-sm">
+        <div>
+          <span className="font-semibold">Journal Entry</span>
+          {!!preview.DocNumber && <span className="ml-2 text-gray-500 font-mono text-xs">{String(preview.DocNumber)}</span>}
+        </div>
+        <div className="text-gray-500 text-xs">
+          Date: {String(preview.TxnDate ?? '')}
+          {!!s?.includesPrerequisiteReport && (
+            <span className="ml-3 text-blue-600">Includes report {String(s.prerequisiteReportNumber ?? '')}</span>
+          )}
+        </div>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 border-b text-xs text-gray-500 uppercase">
+          <tr>
+            <th className="px-4 py-2 text-left w-8">#</th>
+            <th className="px-4 py-2 text-left">Account</th>
+            <th className="px-4 py-2 text-right">Debits</th>
+            <th className="px-4 py-2 text-right">Credits</th>
+            <th className="px-4 py-2 text-left">Description</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {lines.map((line) => {
+            const detail = line.JournalEntryLineDetail as Record<string, unknown>
+            const meta = line._meta as Record<string, unknown> | undefined
+            const postingType = detail?.PostingType as string
+            const amount = line.Amount as number
+            const accountRef = detail?.AccountRef as { name: string } | null
+            const isBalancing = !!meta?.isBalancingLine
+            const isPrereq = meta?.sourceReport === 'prerequisite'
+            const missingAcct = !!meta?.needsQboAccount
+            return (
+              <tr key={String(line.Id)} className={isBalancing ? 'bg-blue-50' : isPrereq ? 'bg-purple-50' : ''}>
+                <td className="px-4 py-2 text-xs text-gray-400">{String(line.Id)}</td>
+                <td className="px-4 py-2">
+                  {missingAcct
+                    ? <span className="text-xs text-red-500 italic">{isBalancing ? 'Bank / AP account needed' : 'No account assigned'}</span>
+                    : <span className="text-xs font-medium">{accountRef?.name ?? '—'}</span>
+                  }
+                  {isPrereq && <span className="ml-1 text-xs text-purple-500">(prior report)</span>}
+                  {isBalancing && <span className="ml-1 text-xs text-blue-500">(balancing)</span>}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums text-xs">{postingType === 'Debit' ? fmt(amount) : ''}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-xs">{postingType === 'Credit' ? fmt(amount) : ''}</td>
+                <td className="px-4 py-2 text-xs text-gray-600">{String(line.Description ?? '')}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+        <tfoot className="border-t-2 border-gray-300 bg-gray-50 font-semibold text-sm">
+          <tr>
+            <td className="px-4 py-2" colSpan={2}>Total</td>
+            <td className="px-4 py-2 text-right tabular-nums">{fmt(totals.debits)}</td>
+            <td className="px-4 py-2 text-right tabular-nums">{fmt(totals.credits)}</td>
+            <td className="px-4 py-2">
+              {Math.abs(totals.debits - totals.credits) < 0.01
+                ? <span className="text-green-600 text-xs font-medium">✓ Balanced</span>
+                : <span className="text-red-600 text-xs">⚠ Out of balance by {fmt(Math.abs(totals.debits - totals.credits))}</span>
+              }
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+      {!!preview.PrivateNote && (
+        <div className="px-4 py-2 border-t text-xs text-gray-400">{String(preview.PrivateNote)}</div>
+      )}
+    </div>
+  )
+}
+
 export default function ReportDetailPage() {
   const params = useParams()
   const id = params.id as string
@@ -487,91 +572,7 @@ export default function ReportDetailPage() {
                   </div>
                 )}
                 {/* QBO-style Journal Entry table */}
-                {(() => {
-                  const lines = preview.Line as Array<Record<string, unknown>>
-                  const s = preview._summary as Record<string, unknown> | undefined
-                  let totalDebits = 0, totalCredits = 0
-                  return (
-                    <div className="border border-gray-200 rounded-lg overflow-hidden">
-                      {/* JE header */}
-                      <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between text-sm">
-                        <div>
-                          <span className="font-semibold">Journal Entry</span>
-                          {preview.DocNumber && <span className="ml-2 text-gray-500 font-mono text-xs">{String(preview.DocNumber)}</span>}
-                        </div>
-                        <div className="text-gray-500 text-xs">
-                          Date: {String(preview.TxnDate ?? '')}
-                          {!!s?.includesPrerequisiteReport && (
-                            <span className="ml-3 text-blue-600">Includes report {String(s.prerequisiteReportNumber ?? '')}</span>
-                          )}
-                        </div>
-                      </div>
-                      <table className="w-full text-sm">
-                        <thead className="bg-gray-50 border-b text-xs text-gray-500 uppercase">
-                          <tr>
-                            <th className="px-4 py-2 text-left w-8">#</th>
-                            <th className="px-4 py-2 text-left">Account</th>
-                            <th className="px-4 py-2 text-right">Debits</th>
-                            <th className="px-4 py-2 text-right">Credits</th>
-                            <th className="px-4 py-2 text-left">Description</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {lines.map((line) => {
-                            const detail = line.JournalEntryLineDetail as Record<string, unknown>
-                            const meta = line._meta as Record<string, unknown> | undefined
-                            const postingType = detail?.PostingType as string
-                            const amount = line.Amount as number
-                            const accountRef = detail?.AccountRef as { name: string } | null
-                            const isBalancing = !!meta?.isBalancingLine
-                            const isPrereq = meta?.sourceReport === 'prerequisite'
-                            const missingAcct = !!meta?.needsQboAccount
-
-                            if (postingType === 'Debit') totalDebits += amount
-                            else totalCredits += amount
-
-                            return (
-                              <tr key={String(line.Id)} className={`${isBalancing ? 'bg-blue-50' : isPrereq ? 'bg-purple-50' : ''}`}>
-                                <td className="px-4 py-2 text-xs text-gray-400">{String(line.Id)}</td>
-                                <td className="px-4 py-2">
-                                  {missingAcct
-                                    ? <span className="text-xs text-red-500 italic">{isBalancing ? 'Bank / AP account needed' : 'No account assigned'}</span>
-                                    : <span className="text-xs font-medium">{accountRef?.name ?? '—'}</span>
-                                  }
-                                  {isPrereq && <span className="ml-1 text-xs text-purple-500">(prior report)</span>}
-                                  {isBalancing && <span className="ml-1 text-xs text-blue-500">(balancing)</span>}
-                                </td>
-                                <td className="px-4 py-2 text-right tabular-nums text-xs">
-                                  {postingType === 'Debit' ? fmt(amount) : ''}
-                                </td>
-                                <td className="px-4 py-2 text-right tabular-nums text-xs">
-                                  {postingType === 'Credit' ? fmt(amount) : ''}
-                                </td>
-                                <td className="px-4 py-2 text-xs text-gray-600">{String(line.Description ?? '')}</td>
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                        <tfoot className="border-t-2 border-gray-300 bg-gray-50 font-semibold text-sm">
-                          <tr>
-                            <td className="px-4 py-2" colSpan={2}>Total</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{fmt(totalDebits)}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{fmt(totalCredits)}</td>
-                            <td className="px-4 py-2">
-                              {Math.abs(totalDebits - totalCredits) < 0.01
-                                ? <span className="text-green-600 text-xs">✓ Balanced</span>
-                                : <span className="text-red-600 text-xs">⚠ Out of balance by {fmt(Math.abs(totalDebits - totalCredits))}</span>
-                              }
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                      {preview.PrivateNote && (
-                        <div className="px-4 py-2 border-t text-xs text-gray-400">{String(preview.PrivateNote)}</div>
-                      )}
-                    </div>
-                  )
-                })()}
+                <JePreviewTable preview={preview} fmt={fmt} />
               </div>
             )}
           </>
