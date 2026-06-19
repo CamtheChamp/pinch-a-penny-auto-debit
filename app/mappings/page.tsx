@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import AccountPicker, { type QboAccount } from '@/app/components/AccountPicker'
 
 interface Mapping {
   id: string
@@ -19,8 +20,8 @@ const BLANK: Omit<Mapping, 'id'> = {
   match_type: 'contains',
   match_field: 'remarks',
   match_value: '',
-  qbo_account_name: '',
-  qbo_account_id: '',
+  qbo_account_name: null,
+  qbo_account_id: null,
   qbo_class_id: '',
   default_memo: '',
   treatment: 'needs_review',
@@ -37,11 +38,19 @@ export default function MappingsPage() {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState<Omit<Mapping, 'id'>>(BLANK)
   const [saving, setSaving] = useState(false)
+  const [accounts, setAccounts] = useState<QboAccount[]>([])
 
   async function load() {
-    const res = await fetch('/api/mappings')
-    const data = await res.json()
-    setMappings(data)
+    const [mappingsRes, accountsRes] = await Promise.all([
+      fetch('/api/mappings'),
+      fetch('/api/qbo/accounts'),
+    ])
+    const mappingsData = await mappingsRes.json()
+    setMappings(mappingsData)
+    if (accountsRes.ok) {
+      const accountsData = await accountsRes.json()
+      setAccounts(accountsData)
+    }
     setLoading(false)
   }
 
@@ -76,6 +85,19 @@ export default function MappingsPage() {
     })
   }
 
+  async function updateAccount(id: string, account: { id: string; name: string } | null) {
+    const patch = {
+      qbo_account_id: account?.id ?? null,
+      qbo_account_name: account?.name ?? null,
+    }
+    setMappings((prev) => prev.map((m) => m.id === id ? { ...m, ...patch } : m))
+    await fetch(`/api/mappings/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    })
+  }
+
   if (loading) return <p className="text-gray-500">Loading…</p>
 
   return (
@@ -92,6 +114,12 @@ export default function MappingsPage() {
           + Add Mapping
         </button>
       </div>
+
+      {accounts.length === 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-3 text-sm text-amber-800 mb-6">
+          QBO not connected or accounts unavailable — connect QuickBooks in <a href="/settings" className="underline">Settings</a> to enable the account picker.
+        </div>
+      )}
 
       {adding && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-6">
@@ -119,13 +147,14 @@ export default function MappingsPage() {
                 {TREATMENTS.map((t) => <option key={t}>{t}</option>)}
               </select>
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">QBO Account Name</label>
-              <input value={draft.qbo_account_name ?? ''} onChange={(e) => setDraft((d) => ({ ...d, qbo_account_name: e.target.value }))} className="w-full border rounded px-2 py-1" />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">QBO Account ID</label>
-              <input value={draft.qbo_account_id ?? ''} onChange={(e) => setDraft((d) => ({ ...d, qbo_account_id: e.target.value }))} className="w-full border rounded px-2 py-1" />
+            <div className="col-span-2">
+              <label className="block text-xs text-gray-500 mb-1">QBO Account</label>
+              <AccountPicker
+                value={{ id: draft.qbo_account_id, name: draft.qbo_account_name }}
+                accounts={accounts}
+                onChange={(acct) => setDraft((d) => ({ ...d, qbo_account_id: acct?.id ?? null, qbo_account_name: acct?.name ?? null }))}
+                placeholder={accounts.length ? 'Select account…' : 'Connect QBO first'}
+              />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Default Memo</label>
@@ -177,11 +206,11 @@ export default function MappingsPage() {
                   </select>
                 </td>
                 <td className="px-4 py-2">
-                  <input
-                    defaultValue={m.qbo_account_name ?? ''}
-                    onBlur={(e) => updateField(m.id, 'qbo_account_name', e.target.value)}
-                    className="text-xs border rounded px-2 py-1 w-36"
-                    placeholder="Account name"
+                  <AccountPicker
+                    value={{ id: m.qbo_account_id, name: m.qbo_account_name }}
+                    accounts={accounts}
+                    onChange={(acct) => updateAccount(m.id, acct)}
+                    placeholder={accounts.length ? 'Select account…' : '—'}
                   />
                 </td>
                 <td className="px-4 py-2">
