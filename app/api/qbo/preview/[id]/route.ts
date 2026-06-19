@@ -23,7 +23,7 @@ function buildJeLine(item: LineItemRow, idx: number, sourceReport: 'prerequisite
   const postingType = net >= 0 ? 'Debit' : 'Credit'
   return {
     Id: String(idx + 1),
-    Description: item.qbo_memo ?? item.remarks,
+    Description: item.remarks,
     Amount: Math.abs(net),
     DetailType: 'JournalEntryLineDetail',
     JournalEntryLineDetail: {
@@ -52,12 +52,15 @@ function buildJeLine(item: LineItemRow, idx: number, sourceReport: 'prerequisite
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview/[id]'>) {
   const { id } = await ctx.params
 
-  const [uploadRes, itemsRes, totalRes, headerRes] = await Promise.all([
+  const [uploadRes, itemsRes, totalRes, headerRes, bankSettingRes] = await Promise.all([
     db.from('pdf_uploads').select('*').eq('id', id).single(),
     db.from('line_items').select('*').eq('upload_id', id).order('sort_order'),
     db.from('customer_totals').select('*').eq('upload_id', id).single(),
     db.from('report_headers').select('*').eq('upload_id', id).single(),
+    db.from('app_settings').select('value').eq('key', 'bank_account').single(),
   ])
+
+  const bankAccount = bankSettingRes.data?.value as { id: string; name: string } | null ?? null
 
   if (uploadRes.error) return Response.json({ error: 'Upload not found' }, { status: 404 })
 
@@ -146,9 +149,9 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     DetailType: 'JournalEntryLineDetail',
     JournalEntryLineDetail: {
       PostingType: netAmountDue >= 0 ? 'Credit' : 'Debit',
-      AccountRef: null, // TODO: set your bank/AP account here
+      AccountRef: bankAccount ? { value: bankAccount.id, name: bankAccount.name } : null,
     },
-    _meta: { isBalancingLine: true, needsQboAccount: true },
+    _meta: { isBalancingLine: true, needsQboAccount: !bankAccount },
   }
 
   // Parse run date into ISO format for QBO TxnDate
@@ -175,7 +178,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     Line: [...jeLines, balancingLine],
     _warnings: [
       ...(unmappedCount > 0 ? [`${unmappedCount} line(s) are missing a QBO account — assign accounts before posting`] : []),
-      ...(!balancingLine.JournalEntryLineDetail.AccountRef ? ['Balancing line needs a bank/AP account assigned'] : []),
+      ...(!bankAccount ? ['Set a Bank / AP account in Settings before pushing'] : []),
     ],
     _summary: {
       reportNumber: header?.report_number,

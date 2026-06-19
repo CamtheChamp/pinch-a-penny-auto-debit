@@ -2,6 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import AccountPicker, { type QboAccount } from '@/app/components/AccountPicker'
 
 interface QboStatus {
   connected: boolean
@@ -15,13 +16,34 @@ function SettingsInner() {
   const router = useRouter()
   const [status, setStatus] = useState<QboStatus | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [accounts, setAccounts] = useState<QboAccount[]>([])
+  const [bankAccount, setBankAccount] = useState<{ id: string | null; name: string | null }>({ id: null, name: null })
+  const [savingBank, setSavingBank] = useState(false)
 
   const flash = searchParams.get('qbo')
   const reason = searchParams.get('reason')
 
   useEffect(() => {
     fetch('/api/qbo/status').then((r) => r.json()).then(setStatus)
+    fetch('/api/settings').then((r) => r.json()).then((s) => {
+      const ba = s.bank_account as { id: string; name: string } | undefined
+      if (ba) setBankAccount({ id: ba.id, name: ba.name })
+    })
+    fetch('/api/qbo/accounts').then((r) => r.ok ? r.json() : []).then((a) => {
+      if (Array.isArray(a)) setAccounts(a)
+    })
   }, [flash])
+
+  async function saveBankAccount(acct: { id: string; name: string } | null) {
+    setSavingBank(true)
+    setBankAccount(acct ?? { id: null, name: null })
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bank_account: acct }),
+    })
+    setSavingBank(false)
+  }
 
   async function handleDisconnect() {
     if (!confirm('Disconnect QuickBooks? You will need to reconnect before pushing journal entries.')) return
@@ -101,6 +123,23 @@ function SettingsInner() {
             </a>
           </>
         )}
+      </div>
+
+      <div className="bg-white border rounded-xl p-6 space-y-3">
+        <h2 className="font-semibold text-lg">Bank / AP Account</h2>
+        <p className="text-sm text-gray-500">
+          The balancing line in every Journal Entry credits (or debits) this account for the net bank charge amount.
+        </p>
+        <div className="flex items-center gap-3">
+          <AccountPicker
+            value={bankAccount}
+            accounts={accounts}
+            onChange={saveBankAccount}
+            placeholder={accounts.length ? 'Select bank or AP account…' : 'Connect QBO first'}
+          />
+          {savingBank && <span className="text-xs text-gray-400">Saving…</span>}
+          {!savingBank && bankAccount.id && <span className="text-xs text-green-600">✓ Saved</span>}
+        </div>
       </div>
 
       <div className="bg-white border rounded-xl p-6 space-y-2">
