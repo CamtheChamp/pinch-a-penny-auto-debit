@@ -52,7 +52,7 @@ interface Upload {
   parse_errors: string[]
 }
 
-interface PrerequisiteReport {
+interface LinkedReport {
   id: string
   file_name: string
   run_date: string
@@ -65,7 +65,8 @@ interface ReportData {
   customerTotal: CustomerTotal | null
   prerequisiteDate: string | null
   prerequisiteMet: boolean
-  prerequisiteReport: PrerequisiteReport | null
+  prerequisiteReport: LinkedReport | null
+  appliedToReport: LinkedReport | null   // set if this is a negative PDF absorbed into another JE
 }
 
 const TREATMENT_LABELS: Record<string, string> = {
@@ -85,12 +86,10 @@ const CATEGORY_COLORS: Record<string, string> = {
   needs_review: 'bg-red-50 text-red-700',
 }
 
-function fmt(n: number | null, showSign = false): string {
+function fmt(n: number | null): string {
   if (n === null) return '—'
   const s = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2 })
-  if (showSign && n < 0) return `(${s})`
-  if (n < 0) return `-$${s}`
-  return `$${s}`
+  return n < 0 ? `-$${s}` : `$${s}`
 }
 
 export default function ReportDetailPage() {
@@ -99,6 +98,7 @@ export default function ReportDetailPage() {
   const [data, setData] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, Partial<LineItem>>>({})
@@ -107,10 +107,7 @@ export default function ReportDetailPage() {
   useEffect(() => {
     fetch(`/api/reports/${id}`)
       .then((r) => r.json())
-      .then((d) => {
-        setData(d)
-        setLoading(false)
-      })
+      .then((d) => { setData(d); setLoading(false) })
   }, [id])
 
   async function saveEdits() {
@@ -130,30 +127,44 @@ export default function ReportDetailPage() {
 
   async function loadPreview() {
     setPreviewLoading(true)
+    setPreviewError(null)
+    setPreview(null)
     const res = await fetch(`/api/qbo/preview/${id}`)
     const json = await res.json()
-    setPreview(json)
+    if (!res.ok) {
+      setPreviewError(json.error ?? 'Preview failed')
+    } else {
+      setPreview(json)
+    }
     setPreviewLoading(false)
   }
 
   function editItem(itemId: string, field: keyof LineItem, value: string) {
-    setEdits((prev) => ({
-      ...prev,
-      [itemId]: { ...prev[itemId], [field]: value },
-    }))
+    setEdits((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }))
   }
 
   if (loading) return <p className="text-gray-500">Loading…</p>
   if (!data) return <p className="text-red-600">Report not found.</p>
 
-  const { upload, header, lineItems, customerTotal, prerequisiteDate, prerequisiteMet, prerequisiteReport } = data
+  const {
+    upload, header, lineItems, customerTotal,
+    prerequisiteDate, prerequisiteMet, prerequisiteReport,
+    appliedToReport,
+  } = data
+
+  const netAmountDue = customerTotal?.net_amount_due ?? null
+  const isNegativeReport = netAmountDue !== null && netAmountDue < 0
+
   const validationOk =
     customerTotal?.open_amount_match &&
     customerTotal?.discount_match &&
     customerTotal?.net_amount_match
 
   const hasUnmapped = lineItems.some((i) => i.treatment === 'needs_review')
-  const canApprove = validationOk && prerequisiteMet && !hasUnmapped
+
+  // Positive PDFs can generate a JE; negative PDFs cannot (their lines go into the positive PDF's JE)
+  const hasBankCharge = !isNegativeReport
+  const canPreviewJE = hasBankCharge && validationOk && prerequisiteMet && !hasUnmapped
 
   return (
     <div className="space-y-6">
@@ -168,9 +179,16 @@ export default function ReportDetailPage() {
               </p>
             )}
           </div>
-          <span className={`text-xs px-2 py-1 rounded-full ${upload.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-            {upload.status}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+              hasBankCharge ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+            }`}>
+              {hasBankCharge ? 'Bank Charge' : 'Credit / No Charge'}
+            </span>
+            <span className={`text-xs px-2 py-1 rounded-full ${upload.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+              {upload.status}
+            </span>
+          </div>
         </div>
 
         {/* Totals summary */}
@@ -183,10 +201,8 @@ export default function ReportDetailPage() {
             ].map(({ label, value, ok }) => (
               <div key={label} className="bg-gray-50 rounded-lg px-4 py-3">
                 <p className="text-gray-500 text-xs mb-1">{label}</p>
-                <p className="font-semibold text-lg">{fmt(value)}</p>
-                {ok === false && (
-                  <p className="text-red-500 text-xs mt-1">Validation mismatch</p>
-                )}
+                <p className={`font-semibold text-lg ${(value ?? 0) < 0 ? 'text-green-700' : ''}`}>{fmt(value)}</p>
+                {ok === false && <p className="text-red-500 text-xs mt-1">Validation mismatch</p>}
               </div>
             ))}
           </div>
@@ -201,26 +217,45 @@ export default function ReportDetailPage() {
           </div>
         )}
 
-        {/* Prerequisite banner */}
-        {prerequisiteDate && (
-          <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${prerequisiteMet ? 'bg-green-50 text-green-700' : 'bg-red-50 border border-red-300 text-red-800'}`}>
-            {prerequisiteMet ? (
-              <p>
-                ✓ Prerequisite report from <strong>{prerequisiteDate}</strong> is on file
-                {prerequisiteReport && (
-                  <> — <a href={`/reports/${prerequisiteReport.id}`} className="underline font-semibold">{prerequisiteReport.file_name}</a></>
-                )}
-              </p>
-            ) : (
-              <div>
-                <p className="font-semibold">⚠ Prerequisite report required before this can be posted</p>
-                <p className="mt-1">
-                  This report contains an <strong>unapplied D.D.</strong> row referencing the debit from{' '}
-                  <strong>{prerequisiteDate}</strong>. Upload that PDF first so the carry-forward balance is properly accounted for.
-                </p>
-                <a href="/" className="mt-2 inline-block underline font-semibold">Upload the {prerequisiteDate} report →</a>
-              </div>
-            )}
+        {/* Bank charge / applied-to banners */}
+        {isNegativeReport && appliedToReport && (
+          <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-blue-50 border border-blue-200 text-blue-800">
+            <p>
+              This report has no bank charge. Its lines are included in the Journal Entry for{' '}
+              <a href={`/reports/${appliedToReport.id}`} className="underline font-semibold">
+                {appliedToReport.file_name}
+              </a>{' '}
+              (run {appliedToReport.run_date}).
+            </p>
+          </div>
+        )}
+        {isNegativeReport && !appliedToReport && (
+          <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-gray-50 border border-gray-200 text-gray-600">
+            This report&apos;s credits have not yet been applied to a bank charge report.
+            Upload the next report to link them.
+          </div>
+        )}
+        {hasBankCharge && prerequisiteReport && (
+          <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-blue-50 border border-blue-200 text-blue-800">
+            <p>
+              ✓ Journal Entry includes lines from prerequisite report{' '}
+              <a href={`/reports/${prerequisiteReport.id}`} className="underline font-semibold">
+                {prerequisiteReport.file_name}
+              </a>{' '}
+              (run {prerequisiteReport.run_date}).
+            </p>
+          </div>
+        )}
+
+        {/* Prerequisite upload required banner */}
+        {prerequisiteDate && !prerequisiteMet && (
+          <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-red-50 border border-red-300 text-red-800">
+            <p className="font-semibold">⚠ Prerequisite report required before this can be posted</p>
+            <p className="mt-1">
+              This report contains an <strong>unapplied D.D.</strong> row referencing the debit from{' '}
+              <strong>{prerequisiteDate}</strong>. Upload that PDF first so the carry-forward balance is accounted for.
+            </p>
+            <a href="/" className="mt-2 inline-block underline font-semibold">Upload the {prerequisiteDate} report →</a>
           </div>
         )}
 
@@ -239,17 +274,15 @@ export default function ReportDetailPage() {
       <div className="bg-white border rounded-xl overflow-hidden">
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h2 className="font-semibold">Line Items ({lineItems.length})</h2>
-          <div className="flex gap-2">
-            {Object.keys(edits).length > 0 && (
-              <button
-                onClick={saveEdits}
-                disabled={saving}
-                className="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700 disabled:opacity-50"
-              >
-                {saving ? 'Saving…' : 'Save Edits'}
-              </button>
-            )}
-          </div>
+          {Object.keys(edits).length > 0 && (
+            <button
+              onClick={saveEdits}
+              disabled={saving}
+              className="bg-blue-600 text-white text-sm px-3 py-1.5 rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save Edits'}
+            </button>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -272,25 +305,21 @@ export default function ReportDetailPage() {
                 const itemEdit = edits[item.id] ?? {}
                 const treatment = (itemEdit.treatment ?? item.treatment) as string
                 const needsReview = treatment === 'needs_review'
-                const isEdit = !!edits[item.id]
-
+                const isEdited = !!edits[item.id]
                 return (
-                  <tr key={item.id} className={`${needsReview ? 'bg-red-50' : ''} ${item.is_carry_forward ? 'bg-orange-50' : ''} ${isEdit ? 'ring-1 ring-blue-300' : ''}`}>
+                  <tr key={item.id} className={`${needsReview ? 'bg-red-50' : ''} ${item.is_carry_forward ? 'bg-orange-50' : ''} ${isEdited ? 'ring-1 ring-blue-300' : ''}`}>
                     <td className="px-4 py-2 max-w-xs">
                       <div>{item.remarks}</div>
-                      {item.warnings.map((w, i) => (
-                        <div key={i} className="text-orange-600 text-xs">{w}</div>
-                      ))}
+                      {item.is_carry_forward && (
+                        <div className="text-orange-600 text-xs font-medium">carry-forward → included in positive PDF&apos;s JE</div>
+                      )}
+                      {item.warnings?.map((w, i) => <div key={i} className="text-orange-600 text-xs">{w}</div>)}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs">{item.doc_type}</td>
                     <td className="px-4 py-2 font-mono text-xs">{item.doc_number}</td>
-                    <td className={`px-4 py-2 text-right tabular-nums ${(item.open_amount ?? 0) < 0 ? 'text-green-700' : ''}`}>
-                      {fmt(item.open_amount)}
-                    </td>
+                    <td className={`px-4 py-2 text-right tabular-nums ${(item.open_amount ?? 0) < 0 ? 'text-green-700' : ''}`}>{fmt(item.open_amount)}</td>
                     <td className="px-4 py-2 text-right tabular-nums">{fmt(item.discount_available)}</td>
-                    <td className={`px-4 py-2 text-right tabular-nums font-semibold ${(item.net_amount_due ?? 0) < 0 ? 'text-green-700' : ''}`}>
-                      {fmt(item.net_amount_due)}
-                    </td>
+                    <td className={`px-4 py-2 text-right tabular-nums font-semibold ${(item.net_amount_due ?? 0) < 0 ? 'text-green-700' : ''}`}>{fmt(item.net_amount_due)}</td>
                     <td className="px-4 py-2">
                       <span className={`text-xs px-2 py-0.5 rounded-full ${CATEGORY_COLORS[item.row_category] ?? ''}`}>
                         {item.row_category.replace(/_/g, ' ')}
@@ -302,9 +331,7 @@ export default function ReportDetailPage() {
                         onChange={(e) => editItem(item.id, 'treatment', e.target.value)}
                         className={`text-xs border rounded px-2 py-1 ${needsReview ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
                       >
-                        {Object.entries(TREATMENT_LABELS).map(([v, l]) => (
-                          <option key={v} value={v}>{l}</option>
-                        ))}
+                        {Object.entries(TREATMENT_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                       </select>
                     </td>
                     <td className="px-4 py-2">
@@ -341,54 +368,91 @@ export default function ReportDetailPage() {
         </div>
       )}
 
-      {/* QBO Preview */}
+      {/* QBO Journal Entry section */}
       <div className="bg-white border rounded-xl px-6 py-5">
         <h2 className="font-semibold mb-1">QuickBooks Online — Journal Entry</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Each report is posted as a <strong>Journal Entry</strong>. Positive lines (purchases) debit the assigned account;
-          negative lines (rebates, carry-forwards) credit it. A balancing line credits your bank/AP account for the net amount debited.
-        </p>
-        {!canApprove && (
-          <ul className="text-sm text-red-600 mb-3 list-disc list-inside space-y-0.5">
-            {!validationOk && <li>Fix total validation errors</li>}
-            {!prerequisiteMet && <li>Upload the prerequisite report from {prerequisiteDate} first</li>}
-            {hasUnmapped && <li>Assign QBO accounts to all unmapped rows</li>}
-          </ul>
-        )}
-        <div className="flex gap-3">
-          <button
-            onClick={loadPreview}
-            disabled={previewLoading || !canApprove}
-            className="bg-gray-700 text-white text-sm px-4 py-2 rounded hover:bg-gray-800 disabled:opacity-50"
-          >
-            {previewLoading ? 'Loading…' : 'Preview Journal Entry'}
-          </button>
-        </div>
 
-        {preview && (
-          <div className="mt-4">
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800 mb-3">
-              Sandbox preview only — not posted to QuickBooks. Assign QBO account IDs to each line before pushing.
-              Lines with <code>needsQboAccount: true</code> must be mapped first.
-            </div>
-            <pre className="bg-gray-900 text-green-300 text-xs rounded-lg p-4 overflow-x-auto max-h-96">
-              {JSON.stringify(preview, null, 2)}
-            </pre>
+        {isNegativeReport ? (
+          <div className="text-sm text-gray-500 bg-gray-50 rounded-lg px-4 py-3">
+            This report has no bank charge and does not generate its own Journal Entry.
+            {appliedToReport ? (
+              <> Its lines are included in the JE for{' '}
+                <a href={`/reports/${appliedToReport.id}`} className="underline font-semibold text-blue-600">
+                  {appliedToReport.file_name}
+                </a>.
+              </>
+            ) : (
+              ' Upload the next report to see where these lines will appear.'
+            )}
           </div>
+        ) : (
+          <>
+            <p className="text-sm text-gray-500 mb-4">
+              One Journal Entry per bank charge. Positive lines debit the assigned account;
+              negative lines credit it.{prerequisiteReport && ' Lines from the prerequisite report are included automatically.'}
+              {' '}A balancing Credit to your bank/AP account equals the net amount debited.
+            </p>
+            {!canPreviewJE && (
+              <ul className="text-sm text-red-600 mb-3 list-disc list-inside space-y-0.5">
+                {!validationOk && <li>Fix total validation errors</li>}
+                {!prerequisiteMet && <li>Upload the prerequisite report from {prerequisiteDate} first</li>}
+                {hasUnmapped && <li>Assign QBO accounts to all unmapped rows</li>}
+              </ul>
+            )}
+            <button
+              onClick={loadPreview}
+              disabled={previewLoading || !canPreviewJE}
+              className="bg-gray-700 text-white text-sm px-4 py-2 rounded hover:bg-gray-800 disabled:opacity-50"
+            >
+              {previewLoading ? 'Loading…' : 'Preview Journal Entry'}
+            </button>
+
+            {previewError && (
+              <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+                {previewError}
+              </div>
+            )}
+
+            {preview && (
+              <div className="mt-4">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800 mb-3">
+                  Sandbox preview only — not posted to QuickBooks. Assign QBO account IDs to each line before pushing.
+                </div>
+                {/* JE summary */}
+                {(() => {
+                  const s = preview._summary as Record<string, unknown> | undefined
+                  if (!s) return null
+                  return (
+                    <div className="mb-3 text-sm text-gray-700 bg-gray-50 rounded-lg px-4 py-3 space-y-1">
+                      <p><span className="font-medium">Bank charge:</span> {fmt((s.totalNetAmountDue as number) ?? null)}</p>
+                      {!!s.includesPrerequisiteReport && (
+                        <p className="text-blue-700">Includes lines from prerequisite report {String(s.prerequisiteReportNumber ?? '')}</p>
+                      )}
+                    </div>
+                  )
+                })()}
+                {/* Warnings */}
+                {(preview._warnings as string[])?.length > 0 && (
+                  <div className="mb-3 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800">
+                    {(preview._warnings as string[]).map((w, i) => <p key={i}>⚠ {w}</p>)}
+                  </div>
+                )}
+                <pre className="bg-gray-900 text-green-300 text-xs rounded-lg p-4 overflow-x-auto max-h-96">
+                  {JSON.stringify(preview, null, 2)}
+                </pre>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* Raw text toggle */}
       <div>
-        <button
-          onClick={() => setShowRaw(!showRaw)}
-          className="text-sm text-gray-500 underline"
-        >
+        <button onClick={() => setShowRaw(!showRaw)} className="text-sm text-gray-500 underline">
           {showRaw ? 'Hide' : 'Show'} raw extracted text
         </button>
         {showRaw && (
           <pre className="mt-2 bg-gray-100 text-xs rounded-lg p-4 overflow-x-auto max-h-64">
-            {/* raw text loaded separately if needed */}
             (Raw text stored in database — query pdf_uploads.raw_text for upload ID {upload.id})
           </pre>
         )}

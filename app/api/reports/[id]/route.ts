@@ -37,6 +37,28 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
     }
   }
 
+  // Reverse lookup: does a downstream (positive) PDF reference this one as its prerequisite?
+  // If so, this is a negative PDF whose lines are absorbed into that report's JE.
+  let appliedToReport: { id: string; file_name: string; run_date: string } | null = null
+  const { data: downstream } = await db
+    .from('pdf_uploads')
+    .select('id, file_name')
+    .eq('prerequisite_upload_id', id)
+    .limit(1)
+    .single()
+  if (downstream) {
+    const { data: dsHeader } = await db
+      .from('report_headers')
+      .select('run_date')
+      .eq('upload_id', downstream.id)
+      .single()
+    appliedToReport = {
+      id: downstream.id,
+      file_name: downstream.file_name,
+      run_date: dsHeader?.run_date ?? '',
+    }
+  }
+
   return Response.json({
     upload,
     header: headerRes.data,
@@ -45,6 +67,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
     prerequisiteDate: upload.prerequisite_date ?? null,
     prerequisiteMet: upload.prerequisite_date ? !!upload.prerequisite_upload_id : true,
     prerequisiteReport,
+    appliedToReport,
   })
 }
 
