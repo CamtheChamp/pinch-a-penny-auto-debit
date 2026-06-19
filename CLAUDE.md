@@ -24,7 +24,8 @@ Parses "R03989 Preauthorized Debit" PDF reports and prepares QuickBooks Online J
 All QBO posting must be sandbox-only until explicitly enabled. The preview/push flow requires:
 1. Validation passes
 2. Prerequisite PDF uploaded (if carry-forward row exists)
-3. Manual "Push to QBO" button click
+3. All included line items have a QBO account assigned
+4. Manual "Push to QBO" button click
 
 ### Supabase client
 Always use the lazy proxy from `lib/db.ts` — never instantiate `createClient` directly in route files. The proxy prevents build-time crashes when env vars are absent.
@@ -54,16 +55,24 @@ Every API route must have `export const dynamic = 'force-dynamic'` to prevent bu
 | `lib/pdf-extract.ts` | PDF text extraction via `unpdf` |
 | `lib/db.ts` | Lazy Supabase proxy client |
 | `lib/qbo-auth.ts` | `getValidAccessToken()` — checks expiry, auto-refreshes, throws `QboAuthError` |
-| `app/api/upload/route.ts` | POST: extract PDF → parse → detect prerequisites → insert all records |
-| `app/api/reports/[id]/route.ts` | GET: full report detail with prerequisite status |
+| `app/components/AccountPicker.tsx` | Searchable QBO account dropdown — used on report, mappings, and settings pages |
+| `app/api/upload/route.ts` | POST: extract → deduplicate → parse → insert records + auto-assign mappings |
+| `app/api/reports/[id]/route.ts` | GET: full report detail with prerequisite + appliedToReport status |
+| `app/api/mappings/route.ts` | GET/POST: accounting mapping rules |
+| `app/api/mappings/[id]/route.ts` | PUT/DELETE: update or remove a mapping rule |
+| `app/api/settings/route.ts` | GET all / PUT upsert: global app settings (e.g. bank_account) |
 | `app/api/qbo/connect/route.ts` | GET: initiates OAuth, sets CSRF state cookie |
 | `app/api/qbo/callback/route.ts` | GET: validates CSRF, exchanges code, stores tokens |
 | `app/api/qbo/status/route.ts` | GET: returns connection status from qbo_connections |
 | `app/api/qbo/disconnect/route.ts` | POST: deletes all qbo_connections rows |
-| `app/api/qbo/preview/[id]/route.ts` | POST: builds Journal Entry payload, persists to qbo_pushes |
-| `app/page.tsx` | Upload page — drag & drop, shows error detail on failure |
-| `app/reports/[id]/page.tsx` | Report review — editable line items, prerequisite banner, JE preview |
-| `app/settings/page.tsx` | QBO connection status, connect/reconnect/disconnect buttons |
+| `app/api/qbo/accounts/route.ts` | GET: fetches live chart of accounts from QBO API |
+| `app/api/qbo/preview/[id]/route.ts` | GET: builds JE payload (merges prereq lines), persists to qbo_pushes |
+| `app/api/qbo/push/[id]/route.ts` | POST: submits proposed JE to QBO sandbox, captures intuit_tid |
+| `app/page.tsx` | Upload page — drag & drop, duplicate detection, error detail |
+| `app/reports/page.tsx` | Reports list — net amount due, validation badge, status |
+| `app/reports/[id]/page.tsx` | Report detail — editable line items, JE preview table, push button |
+| `app/mappings/page.tsx` | Mapping rules CRUD with live QBO account picker |
+| `app/settings/page.tsx` | QBO connection + Bank/AP account setting |
 
 ---
 
@@ -78,18 +87,27 @@ Every API route must have `export const dynamic = 'force-dynamic'` to prevent bu
 - RU rows contain remarks like `"unapplied D.D. 6-11-26"`.
 - `extractPriorReportDate()` parses this to `"6/11/26"`.
 - Upload route checks if a report with that `run_date` already exists in DB.
-- If not, the upload is saved but marked `prerequisite_met: false`.
+- If not, the upload is saved but `prerequisite_upload_id` is null (unresolved).
 - When the older report is later uploaded, all waiting reports are retroactively resolved.
+- Carry-forward rows are auto-assigned `treatment = 'carry_forward'` on upload regardless of mappings.
 
 ### Amount parsing
 - `1,648.50` → `1648.50`
 - `2,229.98-` → `-2229.98` (trailing minus = negative)
 - blank / `0/00/00` → `null`
 
-### Journal Entry mapping
-- Positive `net_amount_due` → `PostingType: "Debit"`
-- Negative `net_amount_due` → `PostingType: "Credit"`
-- Balancing line added as Credit to bank/AP for total net
+### Treatment values
+- `include` — row enters the Journal Entry (debit/credit determined by sign of net_amount_due)
+- `carry_forward` — placeholder RU row; excluded from JE, replaced by prerequisite PDF lines
+- `ignore` — row excluded from JE entirely
+
+### Journal Entry logic
+- **Single JE per bank charge**: positive-net PDFs generate the JE; negative-net PDFs are absorbed
+- Positive PDF's carry-forward RU row is excluded and replaced by lines from the prerequisite (negative) PDF
+- `PostingType`: positive `net_amount_due` → `"Debit"`, negative → `"Credit"`
+- Balancing line Credits (or Debits) the Bank/AP account stored in `app_settings` key `bank_account`
+- JE Description = raw remarks from the PDF row
+- `intuit_tid` captured from QBO response headers for support tracing
 
 ---
 
@@ -101,15 +119,13 @@ RLS is **disabled** on all tables (single-user internal tool, anon key only).
 |-------|---------|
 | `pdf_uploads` | One row per uploaded PDF; tracks status and prerequisite linkage |
 | `report_headers` | Header fields (report number, run_date, customer name) |
-| `line_items` | One row per parsed line; stores accounting overrides (treatment, qbo_account_id, memo) |
+| `line_items` | One row per parsed line; treatment, qbo_account_id, qbo_memo |
 | `customer_totals` | Footer totals + validation results (open/discount/net match flags) |
-| `accounting_mappings` | Rules for auto-assigning treatment/account to line items |
-| `qbo_connections` | OAuth tokens (realm_id, access_token, refresh_token, expires_at, refresh_expires_at) |
-| `qbo_pushes` | Proposed and submitted JE payloads with QBO response |
+| `accounting_mappings` | Rules for auto-assigning treatment/account to line items on upload |
+| `qbo_connections` | OAuth tokens (realm_id, access_token, refresh_token, expires_at, refresh_expires_at, environment) |
+| `qbo_pushes` | Proposed and submitted JE payloads with QBO response + intuit_tid |
 | `audit_logs` | Event log (upload, push, error) |
-
-The `qbo_connections` table was created via MCP migration (not in the local SQL file) with columns:
-`realm_id, access_token, refresh_token, expires_at, refresh_expires_at, environment`
+| `app_settings` | Global key/value config — `bank_account: {id, name}` for JE balancing line |
 
 ---
 
