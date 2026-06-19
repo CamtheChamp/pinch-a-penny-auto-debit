@@ -1,66 +1,123 @@
-export default function SettingsPage() {
+'use client'
+
+import { useEffect, useState, Suspense } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
+
+interface QboStatus {
+  connected: boolean
+  realmId?: string
+  expiresAt?: string
+  environment?: string
+}
+
+function SettingsInner() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const [status, setStatus] = useState<QboStatus | null>(null)
+  const [disconnecting, setDisconnecting] = useState(false)
+
+  const flash = searchParams.get('qbo')
+  const reason = searchParams.get('reason')
+
+  useEffect(() => {
+    fetch('/api/qbo/status').then((r) => r.json()).then(setStatus)
+  }, [flash])
+
+  async function handleDisconnect() {
+    if (!confirm('Disconnect QuickBooks? You will need to reconnect before pushing journal entries.')) return
+    setDisconnecting(true)
+    await fetch('/api/qbo/disconnect', { method: 'POST' })
+    router.replace('/settings')
+    setDisconnecting(false)
+    setStatus({ connected: false })
+  }
+
   return (
-    <div className="max-w-2xl">
-      <h1 className="text-2xl font-bold mb-2">QuickBooks Online Settings</h1>
-      <p className="text-gray-500 mb-8 text-sm">Connect to your QBO sandbox company to preview and test transaction posting.</p>
+    <div className="max-w-xl mx-auto space-y-6">
+      <h1 className="text-2xl font-bold">QBO Settings</h1>
 
-      <div className="space-y-6">
-        <div className="bg-white border rounded-xl px-6 py-5">
-          <h2 className="font-semibold mb-1">Connection Status</h2>
-          <p className="text-sm text-gray-500 mb-4">No connection configured.</p>
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 text-sm text-yellow-800">
-            QBO OAuth 2.0 integration is stubbed. To complete setup:
-            <ol className="list-decimal list-inside mt-2 space-y-1">
-              <li>Create an app at <strong>developer.intuit.com</strong></li>
-              <li>Set <code>QBO_CLIENT_ID</code>, <code>QBO_CLIENT_SECRET</code>, <code>QBO_REDIRECT_URI</code> in your environment</li>
-              <li>Implement OAuth callback at <code>/api/qbo/callback</code></li>
-              <li>Start with <strong>Sandbox</strong> environment only</li>
-            </ol>
-          </div>
+      {flash === 'connected' && (
+        <div className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-3 text-sm">
+          QuickBooks connected successfully.
         </div>
+      )}
+      {flash === 'error' && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
+          Connection failed{reason ? `: ${reason}` : ''}. Try again.
+        </div>
+      )}
 
-        <div className="bg-white border rounded-xl px-6 py-5">
-          <h2 className="font-semibold mb-3">Environment</h2>
-          <div className="flex gap-3">
-            <button className="border-2 border-blue-500 bg-blue-50 text-blue-700 px-4 py-2 rounded-lg text-sm font-semibold">
-              Sandbox (active)
-            </button>
-            <button disabled className="border border-gray-200 text-gray-400 px-4 py-2 rounded-lg text-sm cursor-not-allowed">
-              Production (disabled)
-            </button>
-          </div>
-          <p className="text-xs text-gray-400 mt-2">Production posting is disabled until transaction type is confirmed with your bookkeeper.</p>
-        </div>
+      <div className="bg-white border rounded-xl p-6 space-y-4">
+        <h2 className="font-semibold text-lg">QuickBooks Online</h2>
 
-        <div className="bg-white border rounded-xl px-6 py-5">
-          <h2 className="font-semibold mb-3">Transaction Type</h2>
-          <p className="text-sm text-gray-600 mb-3">
-            The QBO transaction type for these debit reports has <strong>not yet been confirmed</strong>.
-            Confirm with your bookkeeper which of the following applies:
-          </p>
-          <ul className="space-y-2 text-sm">
-            {['Journal Entry', 'Expense / Purchase', 'Check', 'Match existing bank-feed transaction only'].map((t) => (
-              <li key={t} className="flex items-center gap-2">
-                <input type="radio" disabled name="txtype" className="accent-blue-600" />
-                <span className="text-gray-700">{t}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="text-xs text-gray-400 mt-3">Locked until bookkeeper confirms. Update and re-enable production posting in code once decided.</p>
-        </div>
+        {status === null ? (
+          <p className="text-sm text-gray-400">Checking connection…</p>
+        ) : status.connected ? (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
+              <span className="text-sm font-medium text-green-700">Connected</span>
+              {status.environment && (
+                <span className="text-xs bg-gray-100 text-gray-500 rounded px-2 py-0.5 font-mono">
+                  {status.environment}
+                </span>
+              )}
+            </div>
+            {status.realmId && (
+              <p className="text-xs text-gray-500">Realm ID: {status.realmId}</p>
+            )}
+            {status.expiresAt && (
+              <p className="text-xs text-gray-500">
+                Token expires: {new Date(status.expiresAt).toLocaleString()}
+              </p>
+            )}
+            <div className="flex gap-3 pt-2">
+              <a
+                href="/api/qbo/connect"
+                className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Reconnect
+              </a>
+              <button
+                onClick={handleDisconnect}
+                disabled={disconnecting}
+                className="text-sm border border-red-300 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+              >
+                Disconnect
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-300" />
+              <span className="text-sm text-gray-500">Not connected</span>
+            </div>
+            <a
+              href="/api/qbo/connect"
+              className="inline-block mt-2 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Connect to QuickBooks
+            </a>
+          </>
+        )}
+      </div>
 
-        <div className="bg-white border rounded-xl px-6 py-5">
-          <h2 className="font-semibold mb-1">TODO — Production Checklist</h2>
-          <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside mt-2">
-            <li>Confirm transaction type with bookkeeper</li>
-            <li>Implement QBO OAuth 2.0 callback + token refresh</li>
-            <li>Implement <code>POST /api/qbo/push/[id]</code> with sandbox guard</li>
-            <li>Add <em>Push to QBO Sandbox</em> button on report review page</li>
-            <li>Enable production flag only after end-to-end sandbox test</li>
-            <li>Set up token storage encryption in <code>qbo_connections</code> table</li>
-          </ul>
-        </div>
+      <div className="bg-white border rounded-xl p-6 space-y-2">
+        <h2 className="font-semibold text-lg">Environment</h2>
+        <p className="text-sm text-gray-500">
+          Currently targeting <span className="font-mono font-medium">sandbox</span>.
+          Production posting is disabled until sandbox testing is complete.
+        </p>
       </div>
     </div>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense>
+      <SettingsInner />
+    </Suspense>
   )
 }
