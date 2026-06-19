@@ -15,19 +15,22 @@ const navLinks = [
   { href: '/audit', label: 'Audit Log' },
 ]
 
+const VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? 'dev'
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className="min-h-screen bg-gray-50 text-gray-900">
         <nav className="bg-blue-700 text-white px-6 py-3 flex items-center gap-6 shadow">
           <span className="font-bold text-lg whitespace-nowrap">Pinch A Penny #144</span>
-          <div className="flex gap-4 text-sm">
+          <div className="flex gap-4 text-sm flex-1">
             {navLinks.map((l) => (
               <Link key={l.href} href={l.href} className="hover:text-blue-200 transition-colors">
                 {l.label}
               </Link>
             ))}
           </div>
+          <span className="text-blue-300 text-xs font-mono whitespace-nowrap">v{VERSION}</span>
         </nav>
         <main className="max-w-7xl mx-auto px-4 py-8">{children}</main>
       </body>
