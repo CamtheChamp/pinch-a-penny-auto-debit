@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import AccountPicker, { type QboAccount } from '@/app/components/AccountPicker'
 
 interface Header {
   report_number: string
@@ -28,6 +29,7 @@ interface LineItem {
   is_carry_forward: boolean
   warnings: string[]
   treatment: string
+  qbo_account_id: string | null
   qbo_account_name: string | null
   qbo_memo: string | null
 }
@@ -105,11 +107,15 @@ export default function ReportDetailPage() {
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, Partial<LineItem>>>({})
   const [showRaw, setShowRaw] = useState(false)
+  const [accounts, setAccounts] = useState<QboAccount[]>([])
 
   useEffect(() => {
     fetch(`/api/reports/${id}`)
       .then((r) => r.json())
       .then((d) => { setData(d); setLoading(false) })
+    fetch('/api/qbo/accounts')
+      .then((r) => r.json())
+      .then((d) => { if (Array.isArray(d)) setAccounts(d) })
   }, [id])
 
   async function saveEdits() {
@@ -160,6 +166,17 @@ export default function ReportDetailPage() {
 
   function editItem(itemId: string, field: keyof LineItem, value: string) {
     setEdits((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }))
+  }
+
+  function editAccount(itemId: string, account: { id: string; name: string } | null) {
+    setEdits((prev) => ({
+      ...prev,
+      [itemId]: {
+        ...prev[itemId],
+        qbo_account_id: account?.id ?? null,
+        qbo_account_name: account?.name ?? null,
+      } as Partial<LineItem>,
+    }))
   }
 
   if (loading) return <p className="text-gray-500">Loading…</p>
@@ -354,12 +371,13 @@ export default function ReportDetailPage() {
                       </select>
                     </td>
                     <td className="px-4 py-2">
-                      <input
-                        type="text"
-                        placeholder="QBO account…"
-                        defaultValue={item.qbo_account_name ?? ''}
-                        onBlur={(e) => editItem(item.id, 'qbo_account_name', e.target.value)}
-                        className="text-xs border border-gray-200 rounded px-2 py-1 w-32"
+                      <AccountPicker
+                        accounts={accounts}
+                        value={{
+                          id: (itemEdit.qbo_account_id !== undefined ? itemEdit.qbo_account_id : item.qbo_account_id) ?? null,
+                          name: (itemEdit.qbo_account_name !== undefined ? itemEdit.qbo_account_name : item.qbo_account_name) ?? null,
+                        }}
+                        onChange={(acct) => editAccount(item.id, acct)}
                       />
                     </td>
                     <td className="px-4 py-2">
