@@ -1,10 +1,19 @@
-// Server-side PDF text extraction using pdfjs-dist
+// Server-side PDF text extraction using pdfjs-dist (worker disabled for serverless)
 
 export async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
-  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs')
+
+  // Disable the worker — required for serverless/edge environments with no worker thread support
+  pdfjsLib.GlobalWorkerOptions.workerSrc = ''
 
   const data = new Uint8Array(buffer)
-  const doc = await getDocument({ data }).promise
+  const doc = await pdfjsLib.getDocument({
+    data,
+    useSystemFonts: true,
+    disableRange: true,
+    disableStream: true,
+    disableAutoFetch: true,
+  }).promise
 
   const pageTexts: string[] = []
   for (let p = 1; p <= doc.numPages; p++) {
