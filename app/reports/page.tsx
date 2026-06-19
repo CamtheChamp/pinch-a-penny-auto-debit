@@ -19,6 +19,12 @@ interface UploadRow {
   }[] | null
 }
 
+function fmtAmt(n: number | null | undefined) {
+  if (n === null || n === undefined) return '—'
+  const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2 })
+  return n < 0 ? `-$${abs}` : `$${abs}`
+}
+
 function validBadge(ok: boolean | null) {
   if (ok === null) return <span className="text-gray-400 text-xs">—</span>
   return ok
@@ -85,8 +91,8 @@ export default async function ReportsPage() {
               </div>
               {total && (
                 <div className="mt-2 text-sm text-gray-600 flex gap-4">
-                  <span>Net Due: <strong>${total.net_amount_due?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
-                  <span>Open: <strong>${total.open_amount?.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></span>
+                  <span>Net Due: <strong className={(total.net_amount_due ?? 0) < 0 ? 'text-green-700' : ''}>{fmtAmt(total.net_amount_due)}</strong></span>
+                  <span>Open: <strong>{fmtAmt(total.open_amount)}</strong></span>
                 </div>
               )}
             </Link>
