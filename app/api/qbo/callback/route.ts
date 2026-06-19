@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { cookies } from 'next/headers'
 import { db } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -12,7 +13,19 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const code = searchParams.get('code')
   const realmId = searchParams.get('realmId')
+  const state = searchParams.get('state')
   const error = searchParams.get('error')
+
+  // CSRF: validate state matches what we set in the connect cookie
+  const cookieStore = await cookies()
+  const savedState = cookieStore.get('qbo_oauth_state')?.value
+  cookieStore.delete('qbo_oauth_state')
+
+  if (!savedState || savedState !== state) {
+    return Response.redirect(
+      `${process.env.NEXT_PUBLIC_APP_URL}/settings?qbo=error&reason=${encodeURIComponent('csrf_mismatch')}`
+    )
+  }
 
   if (error || !code || !realmId) {
     return Response.redirect(
