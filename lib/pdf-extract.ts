@@ -1,7 +1,8 @@
-// Server-side PDF text extraction using pdf-parse (pure JS, no native deps)
-import pdfParse from 'pdf-parse'
+// Server-side PDF text extraction using unpdf (serverless-safe pdfjs wrapper)
+import { extractText, getDocumentProxy } from 'unpdf'
 
 export async function extractPdfText(buffer: ArrayBuffer): Promise<string> {
-  const result = await pdfParse(Buffer.from(buffer))
-  return result.text
+  const pdf = await getDocumentProxy(new Uint8Array(buffer))
+  const { text } = await extractText(pdf, { mergePages: true })
+  return text
 }

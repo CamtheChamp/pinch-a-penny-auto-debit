@@ -30,7 +30,8 @@ export default function UploadPage() {
         if (json.uploadId) {
           out.push({ name: file.name, id: json.uploadId })
         } else {
-          out.push({ name: file.name, error: json.error ?? 'Unknown error' })
+          const msg = [json.error, json.detail].filter(Boolean).join(': ')
+          out.push({ name: file.name, error: msg || 'Unknown error' })
         }
       } catch (e) {
         out.push({ name: file.name, error: String(e) })
