@@ -33,6 +33,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <span className="text-blue-300 text-xs font-mono whitespace-nowrap">v{VERSION}</span>
         </nav>
         <main className="max-w-7xl mx-auto px-4 py-8">{children}</main>
+        <footer className="border-t mt-12 py-4 text-center text-xs text-gray-400">
+          Pinch A Penny #144 — Internal Tool &nbsp;·&nbsp;
+          <a href="mailto:pcameronwhite@gmail.com" className="underline hover:text-gray-600">Contact Support</a>
+        </footer>
       </body>
     </html>
   )

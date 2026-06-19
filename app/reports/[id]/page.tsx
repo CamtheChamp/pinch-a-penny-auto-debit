@@ -100,6 +100,8 @@ export default function ReportDetailPage() {
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [pushing, setPushing] = useState(false)
+  const [pushResult, setPushResult] = useState<{ ok: boolean; message: string; txnId?: string; intuitTid?: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [edits, setEdits] = useState<Record<string, Partial<LineItem>>>({})
   const [showRaw, setShowRaw] = useState(false)
@@ -129,6 +131,7 @@ export default function ReportDetailPage() {
     setPreviewLoading(true)
     setPreviewError(null)
     setPreview(null)
+    setPushResult(null)
     const res = await fetch(`/api/qbo/preview/${id}`)
     const json = await res.json()
     if (!res.ok) {
@@ -137,6 +140,22 @@ export default function ReportDetailPage() {
       setPreview(json)
     }
     setPreviewLoading(false)
+  }
+
+  async function pushToQbo() {
+    if (!confirm('Push this Journal Entry to QuickBooks sandbox? This will create a real transaction in your sandbox company.')) return
+    setPushing(true)
+    setPushResult(null)
+    const res = await fetch(`/api/qbo/push/${id}`, { method: 'POST' })
+    const json = await res.json()
+    if (res.ok) {
+      setPushResult({ ok: true, message: 'Journal Entry created in QuickBooks sandbox.', txnId: json.qboTransactionId, intuitTid: json.intuitTid })
+      const fresh = await fetch(`/api/reports/${id}`).then((r) => r.json())
+      setData(fresh)
+    } else {
+      setPushResult({ ok: false, message: json.error ?? 'Push failed' })
+    }
+    setPushing(false)
   }
 
   function editItem(itemId: string, field: keyof LineItem, value: string) {
@@ -399,17 +418,36 @@ export default function ReportDetailPage() {
                 {hasUnmapped && <li>Assign QBO accounts to all unmapped rows</li>}
               </ul>
             )}
-            <button
-              onClick={loadPreview}
-              disabled={previewLoading || !canPreviewJE}
-              className="bg-gray-700 text-white text-sm px-4 py-2 rounded hover:bg-gray-800 disabled:opacity-50"
-            >
-              {previewLoading ? 'Loading…' : 'Preview Journal Entry'}
-            </button>
+            <div className="flex gap-3 flex-wrap">
+              <button
+                onClick={loadPreview}
+                disabled={previewLoading || !canPreviewJE}
+                className="bg-gray-700 text-white text-sm px-4 py-2 rounded hover:bg-gray-800 disabled:opacity-50"
+              >
+                {previewLoading ? 'Loading…' : 'Preview Journal Entry'}
+              </button>
+              {preview && (
+                <button
+                  onClick={pushToQbo}
+                  disabled={pushing || upload.status === 'pushed'}
+                  className="bg-green-600 text-white text-sm px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                >
+                  {pushing ? 'Pushing…' : upload.status === 'pushed' ? 'Already Pushed' : 'Push to QBO Sandbox'}
+                </button>
+              )}
+            </div>
 
             {previewError && (
               <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
                 {previewError}
+              </div>
+            )}
+
+            {pushResult && (
+              <div className={`mt-3 rounded-lg px-4 py-3 text-sm ${pushResult.ok ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                <p className="font-semibold">{pushResult.ok ? '✓' : '✗'} {pushResult.message}</p>
+                {pushResult.txnId && <p className="mt-1 text-xs">QBO Transaction ID: <span className="font-mono">{pushResult.txnId}</span></p>}
+                {pushResult.intuitTid && <p className="text-xs">Intuit TID: <span className="font-mono">{pushResult.intuitTid}</span></p>}
               </div>
             )}
 
