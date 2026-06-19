@@ -72,11 +72,9 @@ interface ReportData {
 }
 
 const TREATMENT_LABELS: Record<string, string> = {
-  expense: 'Expense',
-  credit: 'Credit',
+  include: 'Include',
   carry_forward: 'Carry-Forward',
   ignore: 'Ignore',
-  needs_review: 'Needs Review',
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -196,7 +194,7 @@ export default function ReportDetailPage() {
     customerTotal?.discount_match &&
     customerTotal?.net_amount_match
 
-  const hasUnmapped = lineItems.some((i) => i.treatment === 'needs_review')
+  const hasUnmapped = lineItems.some((i) => i.treatment !== 'ignore' && !i.is_carry_forward && !i.qbo_account_id)
 
   // Positive PDFs can generate a JE; negative PDFs cannot (their lines go into the positive PDF's JE)
   const hasBankCharge = !isNegativeReport
@@ -340,10 +338,10 @@ export default function ReportDetailPage() {
               {lineItems.map((item) => {
                 const itemEdit = edits[item.id] ?? {}
                 const treatment = (itemEdit.treatment ?? item.treatment) as string
-                const needsReview = treatment === 'needs_review'
+                const missingAccount = treatment !== 'ignore' && !item.is_carry_forward && !(itemEdit.qbo_account_id !== undefined ? itemEdit.qbo_account_id : item.qbo_account_id)
                 const isEdited = !!edits[item.id]
                 return (
-                  <tr key={item.id} className={`${needsReview ? 'bg-red-50' : ''} ${item.is_carry_forward ? 'bg-orange-50' : ''} ${isEdited ? 'ring-1 ring-blue-300' : ''}`}>
+                  <tr key={item.id} className={`${missingAccount ? 'bg-red-50' : ''} ${item.is_carry_forward ? 'bg-orange-50' : ''} ${isEdited ? 'ring-1 ring-blue-300' : ''}`}>
                     <td className="px-4 py-2 max-w-xs">
                       <div>{item.remarks}</div>
                       {item.is_carry_forward && (
@@ -365,7 +363,7 @@ export default function ReportDetailPage() {
                       <select
                         value={treatment}
                         onChange={(e) => editItem(item.id, 'treatment', e.target.value)}
-                        className={`text-xs border rounded px-2 py-1 ${needsReview ? 'border-red-300 bg-red-50' : 'border-gray-200'}`}
+                        className="text-xs border border-gray-200 rounded px-2 py-1"
                       >
                         {Object.entries(TREATMENT_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                       </select>
@@ -397,11 +395,11 @@ export default function ReportDetailPage() {
         </div>
       </div>
 
-      {/* Unmapped warning */}
+      {/* Missing account warning */}
       {hasUnmapped && (
         <div className="bg-red-50 border border-red-200 rounded-xl px-5 py-4 text-sm text-red-700">
-          <strong>Unmapped rows detected.</strong> Rows highlighted in red have treatment = &quot;Needs Review.&quot;
-          Assign an account and treatment before approving. <a href="/mappings" className="underline">Edit mapping rules →</a>
+          <strong>Missing QBO accounts.</strong> Rows highlighted in red need a QBO account before the Journal Entry can be generated.
+          Assign accounts above or <a href="/mappings" className="underline">add mapping rules →</a>
         </div>
       )}
 
@@ -433,7 +431,7 @@ export default function ReportDetailPage() {
               <ul className="text-sm text-red-600 mb-3 list-disc list-inside space-y-0.5">
                 {!validationOk && <li>Fix total validation errors</li>}
                 {!prerequisiteMet && <li>Upload the prerequisite report from {prerequisiteDate} first</li>}
-                {hasUnmapped && <li>Assign QBO accounts to all unmapped rows</li>}
+                {hasUnmapped && <li>Assign a QBO account to all included rows</li>}
               </ul>
             )}
             <div className="flex gap-3 flex-wrap">

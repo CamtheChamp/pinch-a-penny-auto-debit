@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
         qbo_account_name: mapping?.qbo_account_name ?? null,
         qbo_class_id: mapping?.qbo_class_id ?? null,
         qbo_memo: mapping?.default_memo ?? null,
-        treatment: mapping?.treatment ?? 'needs_review',
+        treatment: mapping?.treatment ?? 'include',
       }
     })
     await db.from('line_items').insert(rows)

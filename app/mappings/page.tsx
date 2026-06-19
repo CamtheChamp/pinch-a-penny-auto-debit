@@ -24,11 +24,11 @@ const BLANK: Omit<Mapping, 'id'> = {
   qbo_account_id: null,
   qbo_class_id: '',
   default_memo: '',
-  treatment: 'needs_review',
+  treatment: 'include',
   priority: 0,
 }
 
-const TREATMENTS = ['expense', 'credit', 'carry_forward', 'ignore', 'needs_review']
+const TREATMENTS = ['include', 'carry_forward', 'ignore']
 const MATCH_TYPES = ['exact', 'contains', 'regex']
 const MATCH_FIELDS = ['remarks', 'doc_type', 'doc_number']
 
