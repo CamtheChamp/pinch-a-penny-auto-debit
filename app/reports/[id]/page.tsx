@@ -360,23 +360,31 @@ export default function ReportDetailPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2">
-                      <select
-                        value={treatment}
-                        onChange={(e) => editItem(item.id, 'treatment', e.target.value)}
-                        className="text-xs border border-gray-200 rounded px-2 py-1"
-                      >
-                        {Object.entries(TREATMENT_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                      </select>
+                      {item.is_carry_forward
+                        ? <span className="text-xs text-orange-600 font-medium">Carry-Forward</span>
+                        : (
+                          <select
+                            value={treatment}
+                            onChange={(e) => editItem(item.id, 'treatment', e.target.value)}
+                            className="text-xs border border-gray-200 rounded px-2 py-1"
+                          >
+                            {Object.entries(TREATMENT_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                          </select>
+                        )}
                     </td>
                     <td className="px-4 py-2">
-                      <AccountPicker
-                        accounts={accounts}
-                        value={{
-                          id: (itemEdit.qbo_account_id !== undefined ? itemEdit.qbo_account_id : item.qbo_account_id) ?? null,
-                          name: (itemEdit.qbo_account_name !== undefined ? itemEdit.qbo_account_name : item.qbo_account_name) ?? null,
-                        }}
-                        onChange={(acct) => editAccount(item.id, acct)}
-                      />
+                      {item.is_carry_forward
+                        ? <span className="text-xs text-gray-400">—</span>
+                        : (
+                          <AccountPicker
+                            accounts={accounts}
+                            value={{
+                              id: (itemEdit.qbo_account_id !== undefined ? itemEdit.qbo_account_id : item.qbo_account_id) ?? null,
+                              name: (itemEdit.qbo_account_name !== undefined ? itemEdit.qbo_account_name : item.qbo_account_name) ?? null,
+                            }}
+                            onChange={(acct) => editAccount(item.id, acct)}
+                          />
+                        )}
                     </td>
                     <td className="px-4 py-2">
                       <input
@@ -470,30 +478,100 @@ export default function ReportDetailPage() {
             {preview && (
               <div className="mt-4">
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800 mb-3">
-                  Sandbox preview only — not posted to QuickBooks. Assign QBO account IDs to each line before pushing.
+                  Sandbox preview only — not posted to QuickBooks.
                 </div>
-                {/* JE summary */}
-                {(() => {
-                  const s = preview._summary as Record<string, unknown> | undefined
-                  if (!s) return null
-                  return (
-                    <div className="mb-3 text-sm text-gray-700 bg-gray-50 rounded-lg px-4 py-3 space-y-1">
-                      <p><span className="font-medium">Bank charge:</span> {fmt((s.totalNetAmountDue as number) ?? null)}</p>
-                      {!!s.includesPrerequisiteReport && (
-                        <p className="text-blue-700">Includes lines from prerequisite report {String(s.prerequisiteReportNumber ?? '')}</p>
-                      )}
-                    </div>
-                  )
-                })()}
                 {/* Warnings */}
                 {(preview._warnings as string[])?.length > 0 && (
                   <div className="mb-3 bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800">
                     {(preview._warnings as string[]).map((w, i) => <p key={i}>⚠ {w}</p>)}
                   </div>
                 )}
-                <pre className="bg-gray-900 text-green-300 text-xs rounded-lg p-4 overflow-x-auto max-h-96">
-                  {JSON.stringify(preview, null, 2)}
-                </pre>
+                {/* QBO-style Journal Entry table */}
+                {(() => {
+                  const lines = preview.Line as Array<Record<string, unknown>>
+                  const s = preview._summary as Record<string, unknown> | undefined
+                  let totalDebits = 0, totalCredits = 0
+                  return (
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      {/* JE header */}
+                      <div className="bg-gray-50 px-4 py-3 border-b flex items-center justify-between text-sm">
+                        <div>
+                          <span className="font-semibold">Journal Entry</span>
+                          {preview.DocNumber && <span className="ml-2 text-gray-500 font-mono text-xs">{String(preview.DocNumber)}</span>}
+                        </div>
+                        <div className="text-gray-500 text-xs">
+                          Date: {String(preview.TxnDate ?? '')}
+                          {!!s?.includesPrerequisiteReport && (
+                            <span className="ml-3 text-blue-600">Includes report {String(s.prerequisiteReportNumber ?? '')}</span>
+                          )}
+                        </div>
+                      </div>
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b text-xs text-gray-500 uppercase">
+                          <tr>
+                            <th className="px-4 py-2 text-left w-8">#</th>
+                            <th className="px-4 py-2 text-left">Account</th>
+                            <th className="px-4 py-2 text-right">Debits</th>
+                            <th className="px-4 py-2 text-right">Credits</th>
+                            <th className="px-4 py-2 text-left">Description</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {lines.map((line) => {
+                            const detail = line.JournalEntryLineDetail as Record<string, unknown>
+                            const meta = line._meta as Record<string, unknown> | undefined
+                            const postingType = detail?.PostingType as string
+                            const amount = line.Amount as number
+                            const accountRef = detail?.AccountRef as { name: string } | null
+                            const isBalancing = !!meta?.isBalancingLine
+                            const isPrereq = meta?.sourceReport === 'prerequisite'
+                            const missingAcct = !!meta?.needsQboAccount
+
+                            if (postingType === 'Debit') totalDebits += amount
+                            else totalCredits += amount
+
+                            return (
+                              <tr key={String(line.Id)} className={`${isBalancing ? 'bg-blue-50' : isPrereq ? 'bg-purple-50' : ''}`}>
+                                <td className="px-4 py-2 text-xs text-gray-400">{String(line.Id)}</td>
+                                <td className="px-4 py-2">
+                                  {missingAcct
+                                    ? <span className="text-xs text-red-500 italic">{isBalancing ? 'Bank / AP account needed' : 'No account assigned'}</span>
+                                    : <span className="text-xs font-medium">{accountRef?.name ?? '—'}</span>
+                                  }
+                                  {isPrereq && <span className="ml-1 text-xs text-purple-500">(prior report)</span>}
+                                  {isBalancing && <span className="ml-1 text-xs text-blue-500">(balancing)</span>}
+                                </td>
+                                <td className="px-4 py-2 text-right tabular-nums text-xs">
+                                  {postingType === 'Debit' ? fmt(amount) : ''}
+                                </td>
+                                <td className="px-4 py-2 text-right tabular-nums text-xs">
+                                  {postingType === 'Credit' ? fmt(amount) : ''}
+                                </td>
+                                <td className="px-4 py-2 text-xs text-gray-600">{String(line.Description ?? '')}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                        <tfoot className="border-t-2 border-gray-300 bg-gray-50 font-semibold text-sm">
+                          <tr>
+                            <td className="px-4 py-2" colSpan={2}>Total</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{fmt(totalDebits)}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{fmt(totalCredits)}</td>
+                            <td className="px-4 py-2">
+                              {Math.abs(totalDebits - totalCredits) < 0.01
+                                ? <span className="text-green-600 text-xs">✓ Balanced</span>
+                                : <span className="text-red-600 text-xs">⚠ Out of balance by {fmt(Math.abs(totalDebits - totalCredits))}</span>
+                              }
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                      {preview.PrivateNote && (
+                        <div className="px-4 py-2 border-t text-xs text-gray-400">{String(preview.PrivateNote)}</div>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
             )}
           </>
