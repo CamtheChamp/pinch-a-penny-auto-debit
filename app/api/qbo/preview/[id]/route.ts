@@ -11,6 +11,7 @@ interface LineItemRow {
   doc_number: string
   net_amount_due: number | null
   open_amount: number | null
+  discount_available: number | null
   treatment: string
   qbo_account_id: string | null
   qbo_account_name: string | null
@@ -61,17 +62,26 @@ function buildJeLine(
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview/[id]'>) {
   const { id } = await ctx.params
 
-  const [uploadRes, itemsRes, totalRes, headerRes, bankSettingRes, apVendorSettingRes] = await Promise.all([
+  const [
+    uploadRes, itemsRes, totalRes, headerRes, bankSettingRes, apVendorSettingRes,
+    discountEnabledSettingRes, discountInventorySettingRes, discountExpenseSettingRes,
+  ] = await Promise.all([
     db.from('pdf_uploads').select('*').eq('id', id).single(),
     db.from('line_items').select('*').eq('upload_id', id).order('sort_order'),
     db.from('customer_totals').select('*').eq('upload_id', id).single(),
     db.from('report_headers').select('*').eq('upload_id', id).single(),
     db.from('app_settings').select('value').eq('key', 'bank_account').single(),
     db.from('app_settings').select('value').eq('key', 'ap_vendor').single(),
+    db.from('app_settings').select('value').eq('key', 'discount_adjustment_enabled').single(),
+    db.from('app_settings').select('value').eq('key', 'discount_inventory_account').single(),
+    db.from('app_settings').select('value').eq('key', 'discount_expense_account').single(),
   ])
 
   const bankAccount = bankSettingRes.data?.value as { id: string; name: string; type?: string } | null ?? null
   const apVendor = apVendorSettingRes.data?.value as { id: string; name: string } | null ?? null
+  const discountEnabled = !!discountEnabledSettingRes.data?.value
+  const discountInventoryAccount = discountInventorySettingRes.data?.value as { id: string; name: string } | null ?? null
+  const discountExpenseAccount = discountExpenseSettingRes.data?.value as { id: string; name: string } | null ?? null
 
   if (uploadRes.error) return Response.json({ error: 'Upload not found' }, { status: 404 })
 
@@ -173,6 +183,43 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
   )
   const jeLines = [...prereqLines, ...currentLines]
 
+  // Discount adjustment: optional combined Debit Inventory / Credit Discount Expense
+  // pair, summed across every line already feeding into jeLines (include-treatment,
+  // non-carry-forward, across the full prerequisite chain).
+  const discountAccountsConfigured = !!discountInventoryAccount && !!discountExpenseAccount
+  const discountTotal = discountEnabled
+    ? [...activePrereqItems.map(({ item }) => item), ...activeCurrentItems]
+        .reduce((sum, item) => sum + (item.discount_available ?? 0), 0)
+    : 0
+  const shouldAddDiscountLines = discountEnabled && discountAccountsConfigured && Math.abs(discountTotal) > 0.001
+
+  const discountLines = shouldAddDiscountLines
+    ? [
+        {
+          Id: String(jeLines.length + 1),
+          Description: `Discount adjustment — ${header?.report_number ?? ''}`,
+          Amount: Math.abs(discountTotal),
+          DetailType: 'JournalEntryLineDetail',
+          JournalEntryLineDetail: {
+            PostingType: 'Debit',
+            AccountRef: { value: discountInventoryAccount!.id, name: discountInventoryAccount!.name },
+          },
+          _meta: { isDiscountAdjustment: true },
+        },
+        {
+          Id: String(jeLines.length + 2),
+          Description: `Discount adjustment — ${header?.report_number ?? ''}`,
+          Amount: Math.abs(discountTotal),
+          DetailType: 'JournalEntryLineDetail',
+          JournalEntryLineDetail: {
+            PostingType: 'Credit',
+            AccountRef: { value: discountExpenseAccount!.id, name: discountExpenseAccount!.name },
+          },
+          _meta: { isDiscountAdjustment: true },
+        },
+      ]
+    : []
+
   // Balancing line: Credit to bank for the positive PDF's net (= the actual ACH debit amount)
   const bankAccountNeedsVendor = !!bankAccount && (
     bankAccount.type === 'Accounts Payable' ||
@@ -192,7 +239,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
   }
 
   const balancingLine = {
-    Id: String(jeLines.length + 1),
+    Id: String(jeLines.length + discountLines.length + 1),
     Description: `Preauthorized debit — ${header?.report_number ?? ''} run ${header?.run_date ?? ''}`,
     Amount: Math.abs(netAmountDue),
     DetailType: 'JournalEntryLineDetail',
@@ -210,6 +257,13 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
       txnDate = `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
     }
   }
+
+  // Unique DocNumber: append the run date so repeated report numbers across
+  // different runs don't collide in QuickBooks.
+  const runDateCompact = txnDate ? txnDate.replace(/-/g, '') : ''
+  const docNumber = header?.report_number
+    ? (runDateCompact ? `${header.report_number}-${runDateCompact}` : header.report_number)
+    : undefined
 
   const unmappedCount =
     activePrereqItems.filter(({ item }) => !item.qbo_account_id).length +
@@ -240,13 +294,14 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
 
   const journalEntry = {
     TxnDate: txnDate,
-    DocNumber: header?.report_number,
+    DocNumber: docNumber,
     PrivateNote: `Pinch A Penny ${header?.customer_name ?? '#144'} — Bank Charge ${header?.run_date} | Reports: ${includesReports}`,
-    Line: [...jeLines, balancingLine],
+    Line: [...jeLines, ...discountLines, balancingLine],
     _warnings: [
       ...(unmappedCount > 0 ? [`${unmappedCount} line(s) are missing a QBO account — assign accounts before posting`] : []),
       ...(!bankAccount ? ['Set a Bank / AP account in Settings before pushing'] : []),
       ...(bankAccountNeedsVendor && !apVendor ? ['Set an AP Vendor in Settings before pushing to an Accounts Payable account'] : []),
+      ...(discountEnabled && !discountAccountsConfigured ? ['Set a Discount Inventory account and Discount Expense account in Settings to apply discount adjustments'] : []),
     ],
     _summary: {
       reportNumber: header?.report_number,
@@ -256,6 +311,8 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
       includesPrerequisiteReport: prerequisiteSummaries.length > 0,
       prerequisiteReportNumber: prerequisiteSummaries.at(-1)?.reportNumber ?? null,
       prerequisiteReports: prerequisiteSummaries,
+      discountAdjustmentApplied: shouldAddDiscountLines,
+      discountTotal: shouldAddDiscountLines ? discountTotal : 0,
     },
     _environment: environment,
   }

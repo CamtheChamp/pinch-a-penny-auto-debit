@@ -27,6 +27,12 @@ function SettingsInner() {
   const [apVendor, setApVendor] = useState<{ id: string | null; name: string | null }>({ id: null, name: null })
   const [savingBank, setSavingBank] = useState(false)
   const [savingVendor, setSavingVendor] = useState(false)
+  const [discountEnabled, setDiscountEnabled] = useState(false)
+  const [discountInventoryAccount, setDiscountInventoryAccount] = useState<{ id: string | null; name: string | null }>({ id: null, name: null })
+  const [discountExpenseAccount, setDiscountExpenseAccount] = useState<{ id: string | null; name: string | null }>({ id: null, name: null })
+  const [savingDiscountEnabled, setSavingDiscountEnabled] = useState(false)
+  const [savingDiscountInventory, setSavingDiscountInventory] = useState(false)
+  const [savingDiscountExpense, setSavingDiscountExpense] = useState(false)
 
   const flash = searchParams.get('qbo')
   const reason = searchParams.get('reason')
@@ -38,6 +44,12 @@ function SettingsInner() {
       const av = s.ap_vendor as { id: string; name: string } | undefined
       if (ba) setBankAccount({ id: ba.id, name: ba.name })
       if (av) setApVendor({ id: av.id, name: av.name })
+      const de = s.discount_adjustment_enabled as boolean | undefined
+      const dia = s.discount_inventory_account as { id: string; name: string } | undefined
+      const dea = s.discount_expense_account as { id: string; name: string } | undefined
+      setDiscountEnabled(!!de)
+      if (dia) setDiscountInventoryAccount({ id: dia.id, name: dia.name })
+      if (dea) setDiscountExpenseAccount({ id: dea.id, name: dea.name })
     })
     fetch('/api/qbo/accounts').then((r) => r.ok ? r.json() : []).then((a) => {
       if (Array.isArray(a)) setAccounts(a)
@@ -69,6 +81,39 @@ function SettingsInner() {
       body: JSON.stringify({ ap_vendor: vendor }),
     })
     setSavingVendor(false)
+  }
+
+  async function saveDiscountEnabled(enabled: boolean) {
+    setSavingDiscountEnabled(true)
+    setDiscountEnabled(enabled)
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ discount_adjustment_enabled: enabled }),
+    })
+    setSavingDiscountEnabled(false)
+  }
+
+  async function saveDiscountInventoryAccount(acct: { id: string; name: string } | null) {
+    setSavingDiscountInventory(true)
+    setDiscountInventoryAccount(acct ?? { id: null, name: null })
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ discount_inventory_account: acct }),
+    })
+    setSavingDiscountInventory(false)
+  }
+
+  async function saveDiscountExpenseAccount(acct: { id: string; name: string } | null) {
+    setSavingDiscountExpense(true)
+    setDiscountExpenseAccount(acct ?? { id: null, name: null })
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ discount_expense_account: acct }),
+    })
+    setSavingDiscountExpense(false)
   }
 
   async function handleDisconnect() {
@@ -190,6 +235,50 @@ function SettingsInner() {
           </select>
           {savingVendor && <span className="text-xs text-gray-400">Saving...</span>}
           {!savingVendor && apVendor.id && <span className="text-xs text-green-600">Saved</span>}
+        </div>
+      </div>
+
+      <div className="bg-white border rounded-xl p-6 space-y-3">
+        <h2 className="font-semibold text-lg">Discount Adjustment</h2>
+        <p className="text-sm text-gray-500">
+          When enabled, the total available discount across all included line items
+          is reclassified from Discount Expense to Inventory on each Journal Entry.
+        </p>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={discountEnabled}
+              onChange={(e) => saveDiscountEnabled(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm">Enable discount adjustment</span>
+          </label>
+          {savingDiscountEnabled && <span className="text-xs text-gray-400">Saving…</span>}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span className="text-sm w-40 shrink-0">Inventory account</span>
+          <AccountPicker
+            value={discountInventoryAccount}
+            accounts={accounts}
+            onChange={saveDiscountInventoryAccount}
+            placeholder={accounts.length ? 'Select inventory account…' : 'Connect QBO first'}
+          />
+          {savingDiscountInventory && <span className="text-xs text-gray-400">Saving…</span>}
+          {!savingDiscountInventory && discountInventoryAccount.id && <span className="text-xs text-green-600">✓ Saved</span>}
+        </div>
+
+        <div className="flex items-center gap-3">
+          <span className="text-sm w-40 shrink-0">Discount expense account</span>
+          <AccountPicker
+            value={discountExpenseAccount}
+            accounts={accounts}
+            onChange={saveDiscountExpenseAccount}
+            placeholder={accounts.length ? 'Select expense account…' : 'Connect QBO first'}
+          />
+          {savingDiscountExpense && <span className="text-xs text-gray-400">Saving…</span>}
+          {!savingDiscountExpense && discountExpenseAccount.id && <span className="text-xs text-green-600">✓ Saved</span>}
         </div>
       </div>
 
