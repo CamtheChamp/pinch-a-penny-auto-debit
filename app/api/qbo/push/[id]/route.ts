@@ -37,8 +37,8 @@ function sanitizePayload(proposed: Record<string, unknown>): Record<string, unkn
     if (detail.ClassRef == null) delete detail.ClassRef
     return rest
   })
-  const { _warnings, _summary, ...payload } = proposed
-  void _warnings; void _summary
+  const { _warnings, _summary, _environment, ...payload } = proposed
+  void _warnings; void _summary; void _environment
   return { ...payload, Line: lines }
 }
 
