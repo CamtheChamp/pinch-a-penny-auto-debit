@@ -11,6 +11,11 @@ interface QboStatus {
   environment?: string
 }
 
+interface QboVendor {
+  id: string
+  name: string
+}
+
 function SettingsInner() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -18,7 +23,10 @@ function SettingsInner() {
   const [disconnecting, setDisconnecting] = useState(false)
   const [accounts, setAccounts] = useState<QboAccount[]>([])
   const [bankAccount, setBankAccount] = useState<{ id: string | null; name: string | null }>({ id: null, name: null })
+  const [vendors, setVendors] = useState<QboVendor[]>([])
+  const [apVendor, setApVendor] = useState<{ id: string | null; name: string | null }>({ id: null, name: null })
   const [savingBank, setSavingBank] = useState(false)
+  const [savingVendor, setSavingVendor] = useState(false)
 
   const flash = searchParams.get('qbo')
   const reason = searchParams.get('reason')
@@ -27,22 +35,40 @@ function SettingsInner() {
     fetch('/api/qbo/status').then((r) => r.json()).then(setStatus)
     fetch('/api/settings').then((r) => r.json()).then((s) => {
       const ba = s.bank_account as { id: string; name: string } | undefined
+      const av = s.ap_vendor as { id: string; name: string } | undefined
       if (ba) setBankAccount({ id: ba.id, name: ba.name })
+      if (av) setApVendor({ id: av.id, name: av.name })
     })
     fetch('/api/qbo/accounts').then((r) => r.ok ? r.json() : []).then((a) => {
       if (Array.isArray(a)) setAccounts(a)
+    })
+    fetch('/api/qbo/vendors').then((r) => r.ok ? r.json() : []).then((v) => {
+      if (Array.isArray(v)) setVendors(v)
     })
   }, [flash])
 
   async function saveBankAccount(acct: { id: string; name: string } | null) {
     setSavingBank(true)
+    const fullAccount = accounts.find((a) => a.id === acct?.id)
+    const value = acct ? { ...acct, type: fullAccount?.type, subType: fullAccount?.subType } : null
     setBankAccount(acct ?? { id: null, name: null })
     await fetch('/api/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ bank_account: acct }),
+      body: JSON.stringify({ bank_account: value }),
     })
     setSavingBank(false)
+  }
+
+  async function saveApVendor(vendor: { id: string; name: string } | null) {
+    setSavingVendor(true)
+    setApVendor(vendor ?? { id: null, name: null })
+    await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ap_vendor: vendor }),
+    })
+    setSavingVendor(false)
   }
 
   async function handleDisconnect() {
@@ -139,6 +165,31 @@ function SettingsInner() {
           />
           {savingBank && <span className="text-xs text-gray-400">Saving…</span>}
           {!savingBank && bankAccount.id && <span className="text-xs text-green-600">✓ Saved</span>}
+        </div>
+      </div>
+
+      <div className="bg-white border rounded-xl p-6 space-y-3">
+        <h2 className="font-semibold text-lg">AP Vendor</h2>
+        <p className="text-sm text-gray-500">
+          Required when the balancing account is Accounts Payable.
+        </p>
+        <div className="flex items-center gap-3">
+          <select
+            value={apVendor.id ?? ''}
+            onChange={(e) => {
+              const vendor = vendors.find((v) => v.id === e.target.value)
+              saveApVendor(vendor ? { id: vendor.id, name: vendor.name } : null)
+            }}
+            className="text-xs border border-gray-200 rounded px-2 py-1 w-64"
+            disabled={!vendors.length}
+          >
+            <option value="">{vendors.length ? 'Select vendor...' : 'Connect QBO first'}</option>
+            {vendors.map((vendor) => (
+              <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+            ))}
+          </select>
+          {savingVendor && <span className="text-xs text-gray-400">Saving...</span>}
+          {!savingVendor && apVendor.id && <span className="text-xs text-green-600">Saved</span>}
         </div>
       </div>
 

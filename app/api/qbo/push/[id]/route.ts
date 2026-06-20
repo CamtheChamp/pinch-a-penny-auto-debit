@@ -50,7 +50,9 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     .from('qbo_pushes')
     .select('*')
     .eq('upload_id', id)
-    .single()
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
   if (!push?.proposed_payload) {
     return Response.json({ error: 'No proposed Journal Entry found. Generate a preview first.' }, { status: 404 })
@@ -70,6 +72,16 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   if (unmapped.length > 0) {
     return Response.json({
       error: `${unmapped.length} line(s) are missing a QBO account. Assign all accounts before pushing.`,
+    }, { status: 422 })
+  }
+
+  const missingVendor = lines.filter((l) => {
+    const meta = l._meta as Record<string, unknown> | undefined
+    return meta?.needsQboVendor
+  })
+  if (missingVendor.length > 0) {
+    return Response.json({
+      error: 'The balancing account is Accounts Payable, so a Vendor must be selected in Settings before pushing.',
     }, { status: 422 })
   }
 

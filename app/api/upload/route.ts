@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 import { db } from '@/lib/db'
 import { extractPdfText } from '@/lib/pdf-extract'
 import { parseReport } from '@/lib/parser'
+import { sameReportDate } from '@/lib/report-dates'
 
 export async function POST(req: NextRequest) {
   const form = await req.formData()
@@ -26,13 +27,13 @@ export async function POST(req: NextRequest) {
 
   // Duplicate check — reject if this report number is already in the DB
   if (parsed.header?.reportNumber) {
-    const { data: existing } = await db
+    const { data: existingHeaders } = await db
       .from('report_headers')
-      .select('upload_id')
+      .select('upload_id, run_date')
       .eq('report_number', parsed.header.reportNumber)
-      .eq('run_date', parsed.header.runDate)
-      .limit(1)
-      .single()
+    const existing = existingHeaders?.find((h: { upload_id: string; run_date: string | null }) =>
+      sameReportDate(h.run_date, parsed.header?.runDate)
+    )
     if (existing) {
       return Response.json({
         error: `Report ${parsed.header.reportNumber} (run ${parsed.header.runDate}) has already been uploaded.`,
@@ -48,12 +49,13 @@ export async function POST(req: NextRequest) {
   // Check if the prerequisite PDF is already uploaded
   let prerequisiteUploadId: string | null = null
   if (prerequisiteDate) {
-    const { data: prior } = await db
+    const { data: priorHeaders } = await db
       .from('report_headers')
-      .select('upload_id')
-      .eq('run_date', prerequisiteDate)
-      .limit(1)
-      .single()
+      .select('upload_id, run_date')
+
+    const prior = priorHeaders?.find((h: { upload_id: string; run_date: string | null }) =>
+      sameReportDate(h.run_date, prerequisiteDate)
+    )
     prerequisiteUploadId = prior?.upload_id ?? null
   }
 
@@ -92,14 +94,16 @@ export async function POST(req: NextRequest) {
     if (parsed.header.runDate) {
       const { data: waiting } = await db
         .from('pdf_uploads')
-        .select('id')
-        .eq('prerequisite_date', parsed.header.runDate)
+        .select('id, prerequisite_date')
         .is('prerequisite_upload_id', null)
-      if (waiting?.length) {
+      const resolvedWaiting = waiting?.filter((r: { id: string; prerequisite_date: string | null }) =>
+        sameReportDate(r.prerequisite_date, parsed.header?.runDate)
+      ) ?? []
+      if (resolvedWaiting.length) {
         await db
           .from('pdf_uploads')
           .update({ prerequisite_upload_id: uploadId })
-          .in('id', waiting.map((r: { id: string }) => r.id))
+          .in('id', resolvedWaiting.map((r: { id: string }) => r.id))
       }
     }
   }

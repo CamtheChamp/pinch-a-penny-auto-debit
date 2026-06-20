@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
+import { resolvePrerequisiteChain } from '@/lib/report-chain'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,12 @@ interface LineItemRow {
   is_carry_forward: boolean
 }
 
-function buildJeLine(item: LineItemRow, idx: number, sourceReport: 'prerequisite' | 'current') {
+function buildJeLine(
+  item: LineItemRow,
+  idx: number,
+  sourceReport: 'prerequisite' | 'current',
+  sourceInfo?: { uploadId: string; runDate: string | null; reportNumber: string | null },
+) {
   const net = item.net_amount_due ?? item.open_amount ?? 0
   const postingType = net >= 0 ? 'Debit' : 'Credit'
   return {
@@ -41,6 +47,9 @@ function buildJeLine(item: LineItemRow, idx: number, sourceReport: 'prerequisite
       needsQboAccount: !item.qbo_account_id,
       isCarryForward: item.is_carry_forward,
       sourceReport,
+      sourceUploadId: sourceInfo?.uploadId,
+      sourceRunDate: sourceInfo?.runDate,
+      sourceReportNumber: sourceInfo?.reportNumber,
     },
   }
 }
@@ -52,15 +61,17 @@ function buildJeLine(item: LineItemRow, idx: number, sourceReport: 'prerequisite
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview/[id]'>) {
   const { id } = await ctx.params
 
-  const [uploadRes, itemsRes, totalRes, headerRes, bankSettingRes] = await Promise.all([
+  const [uploadRes, itemsRes, totalRes, headerRes, bankSettingRes, apVendorSettingRes] = await Promise.all([
     db.from('pdf_uploads').select('*').eq('id', id).single(),
     db.from('line_items').select('*').eq('upload_id', id).order('sort_order'),
     db.from('customer_totals').select('*').eq('upload_id', id).single(),
     db.from('report_headers').select('*').eq('upload_id', id).single(),
     db.from('app_settings').select('value').eq('key', 'bank_account').single(),
+    db.from('app_settings').select('value').eq('key', 'ap_vendor').single(),
   ])
 
-  const bankAccount = bankSettingRes.data?.value as { id: string; name: string } | null ?? null
+  const bankAccount = bankSettingRes.data?.value as { id: string; name: string; type?: string } | null ?? null
+  const apVendor = apVendorSettingRes.data?.value as { id: string; name: string } | null ?? null
 
   if (uploadRes.error) return Response.json({ error: 'Upload not found' }, { status: 404 })
 
@@ -85,11 +96,19 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     }, { status: 422 })
   }
 
-  // Block if prerequisite PDF hasn't been uploaded yet
-  if (upload.prerequisite_date && !upload.prerequisite_upload_id) {
+  const prerequisiteChain = await resolvePrerequisiteChain(upload)
+
+  // Block if any prerequisite PDF in the carry-forward chain hasn't been uploaded yet
+  if (prerequisiteChain.unresolvedDate) {
     return Response.json({
-      error: `Prerequisite report from ${upload.prerequisite_date} has not been uploaded. Upload that PDF first.`,
-      prerequisiteDate: upload.prerequisite_date,
+      error: `Prerequisite report from ${prerequisiteChain.unresolvedDate} has not been uploaded. Upload that PDF first.`,
+      prerequisiteDate: prerequisiteChain.unresolvedDate,
+    }, { status: 422 })
+  }
+
+  if (prerequisiteChain.cycleDetected) {
+    return Response.json({
+      error: 'A circular prerequisite link was detected. Cannot build Journal Entry until the report chain is corrected.',
     }, { status: 422 })
   }
 
@@ -101,57 +120,84 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     }, { status: 422 })
   }
 
-  // Fetch prerequisite (negative) PDF data if present
-  let prereqItems: LineItemRow[] = []
-  let prereqHeader: { report_number: string | null; run_date: string | null } | null = null
+  const prerequisiteReports: Array<{
+    upload: { id: string; file_name: string }
+    header: { report_number: string | null; run_date: string | null } | null
+    items: LineItemRow[]
+  }> = []
 
-  if (upload.prerequisite_upload_id) {
-    const [prereqItemsRes, prereqTotalRes, prereqHeaderRes] = await Promise.all([
-      db.from('line_items').select('*').eq('upload_id', upload.prerequisite_upload_id).order('sort_order'),
-      db.from('customer_totals').select('*').eq('upload_id', upload.prerequisite_upload_id).single(),
-      db.from('report_headers').select('report_number, run_date').eq('upload_id', upload.prerequisite_upload_id).single(),
+  for (const chainReport of prerequisiteChain.reports) {
+    const [itemsRes, totalRes] = await Promise.all([
+      db.from('line_items').select('*').eq('upload_id', chainReport.upload.id).order('sort_order'),
+      db.from('customer_totals').select('*').eq('upload_id', chainReport.upload.id).single(),
     ])
 
-    prereqItems = prereqItemsRes.data ?? []
-    prereqHeader = prereqHeaderRes.data ?? null
-
-    // Block if prerequisite report's totals didn't validate
-    const prereqTotal = prereqTotalRes.data
-    if (prereqTotal && (!prereqTotal.open_amount_match || !prereqTotal.discount_match || !prereqTotal.net_amount_match)) {
+    const chainTotal = totalRes.data
+    if (chainTotal && (!chainTotal.open_amount_match || !chainTotal.discount_match || !chainTotal.net_amount_match)) {
       return Response.json({
-        error: `Prerequisite report (${prereqHeader?.run_date ?? upload.prerequisite_date}) has not passed validation. Resolve it before building this Journal Entry.`,
+        error: `Prerequisite report (${chainReport.header?.run_date ?? chainReport.upload.prerequisite_date ?? chainReport.upload.file_name}) has not passed validation. Resolve it before building this Journal Entry.`,
       }, { status: 422 })
     }
+
+    prerequisiteReports.push({
+      ...chainReport,
+      items: (itemsRes.data ?? []) as LineItemRow[],
+    })
   }
 
   // Build JE lines:
-  //   1. Lines from the prerequisite (negative) PDF — all non-ignored
+  //   1. Real lines from every prerequisite PDF, oldest to newest
   //   2. Lines from this (positive) PDF — non-ignored, carry-forward rows excluded
-  //      (carry-forward RU rows are replaced by the actual prerequisite lines above)
+  //      (carry-forward RU rows are replaced by the actual prerequisite chain lines above)
   //
   // Convention: positive net → Debit, negative net → Credit
   // Balancing line → Credit to bank/AP for the positive PDF's customer total (= actual bank charge)
 
-  const activePrereqItems = prereqItems.filter(i => i.treatment !== 'ignore')
+  const activePrereqItems = prerequisiteReports.flatMap((report) =>
+    report.items
+      .filter(i => i.treatment !== 'ignore' && !i.is_carry_forward)
+      .map((item) => ({
+        item,
+        sourceInfo: {
+          uploadId: report.upload.id,
+          runDate: report.header?.run_date ?? null,
+          reportNumber: report.header?.report_number ?? null,
+        },
+      }))
+  )
   const activeCurrentItems = items.filter(i => i.treatment !== 'ignore' && !i.is_carry_forward)
 
-  const prereqLines = activePrereqItems.map((item, idx) => buildJeLine(item, idx, 'prerequisite'))
+  const prereqLines = activePrereqItems.map(({ item, sourceInfo }, idx) => buildJeLine(item, idx, 'prerequisite', sourceInfo))
   const currentLines = activeCurrentItems.map((item, idx) =>
     buildJeLine(item, prereqLines.length + idx, 'current')
   )
   const jeLines = [...prereqLines, ...currentLines]
 
   // Balancing line: Credit to bank for the positive PDF's net (= the actual ACH debit amount)
+  const bankAccountNeedsVendor = !!bankAccount && (
+    bankAccount.type === 'Accounts Payable' ||
+    bankAccount.name.toLowerCase().includes('accounts payable')
+  )
+
+  const balancingLineDetail: Record<string, unknown> = {
+    PostingType: netAmountDue >= 0 ? 'Credit' : 'Debit',
+    AccountRef: bankAccount ? { value: bankAccount.id, name: bankAccount.name } : null,
+  }
+
+  if (bankAccountNeedsVendor && apVendor) {
+    balancingLineDetail.Entity = {
+      Type: 'Vendor',
+      EntityRef: { value: apVendor.id, name: apVendor.name },
+    }
+  }
+
   const balancingLine = {
     Id: String(jeLines.length + 1),
     Description: `Preauthorized debit — ${header?.report_number ?? ''} run ${header?.run_date ?? ''}`,
     Amount: Math.abs(netAmountDue),
     DetailType: 'JournalEntryLineDetail',
-    JournalEntryLineDetail: {
-      PostingType: netAmountDue >= 0 ? 'Credit' : 'Debit',
-      AccountRef: bankAccount ? { value: bankAccount.id, name: bankAccount.name } : null,
-    },
-    _meta: { isBalancingLine: true, needsQboAccount: !bankAccount },
+    JournalEntryLineDetail: balancingLineDetail,
+    _meta: { isBalancingLine: true, needsQboAccount: !bankAccount, needsQboVendor: bankAccountNeedsVendor && !apVendor },
   }
 
   // Parse run date into ISO format for QBO TxnDate
@@ -165,10 +211,23 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     }
   }
 
-  const unmappedCount = [...activePrereqItems, ...activeCurrentItems].filter(i => !i.qbo_account_id).length
+  const unmappedCount =
+    activePrereqItems.filter(({ item }) => !item.qbo_account_id).length +
+    activeCurrentItems.filter(i => !i.qbo_account_id).length
 
-  const includesReports = prereqHeader
-    ? `${header?.report_number ?? ''} + ${prereqHeader.report_number ?? ''}`
+  const prerequisiteSummaries = prerequisiteReports.map((report) => ({
+    uploadId: report.upload.id,
+    fileName: report.upload.file_name,
+    reportNumber: report.header?.report_number ?? null,
+    runDate: report.header?.run_date ?? null,
+  }))
+
+  const includedReportNumbers = prerequisiteSummaries
+    .map((report) => report.reportNumber)
+    .filter(Boolean)
+
+  const includesReports = includedReportNumbers.length
+    ? `${header?.report_number ?? ''} + ${includedReportNumbers.join(' + ')}`
     : (header?.report_number ?? '')
 
   const journalEntry = {
@@ -179,24 +238,51 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     _warnings: [
       ...(unmappedCount > 0 ? [`${unmappedCount} line(s) are missing a QBO account — assign accounts before posting`] : []),
       ...(!bankAccount ? ['Set a Bank / AP account in Settings before pushing'] : []),
+      ...(bankAccountNeedsVendor && !apVendor ? ['Set an AP Vendor in Settings before pushing to an Accounts Payable account'] : []),
     ],
     _summary: {
       reportNumber: header?.report_number,
       runDate: header?.run_date,
       totalNetAmountDue: netAmountDue,
       lineCount: jeLines.length,
-      includesPrerequisiteReport: !!prereqHeader,
-      prerequisiteReportNumber: prereqHeader?.report_number ?? null,
+      includesPrerequisiteReport: prerequisiteSummaries.length > 0,
+      prerequisiteReportNumber: prerequisiteSummaries.at(-1)?.reportNumber ?? null,
+      prerequisiteReports: prerequisiteSummaries,
     },
   }
 
-  // Persist the proposed payload (keyed on this positive PDF's upload_id)
-  await db.from('qbo_pushes').upsert({
+  const pendingPush = {
     upload_id: id,
     environment: 'sandbox',
     proposed_payload: journalEntry,
     status: 'pending',
-  }, { onConflict: 'upload_id' })
+  }
+
+  const { data: existingPush, error: existingPushError } = await db
+    .from('qbo_pushes')
+    .select('id')
+    .eq('upload_id', id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (existingPushError) {
+    return Response.json({
+      error: 'Journal Entry preview was built, but the saved proposal could not be checked. Try preview again before pushing.',
+      detail: existingPushError.message,
+    }, { status: 500 })
+  }
+
+  const saveResult = existingPush
+    ? await db.from('qbo_pushes').update(pendingPush).eq('id', existingPush.id)
+    : await db.from('qbo_pushes').insert(pendingPush)
+
+  if (saveResult.error) {
+    return Response.json({
+      error: 'Journal Entry preview was built, but the saved proposal could not be stored. Try preview again before pushing.',
+      detail: saveResult.error.message,
+    }, { status: 500 })
+  }
 
   return Response.json(journalEntry)
 }

@@ -58,6 +58,7 @@ interface LinkedReport {
   id: string
   file_name: string
   run_date: string
+  report_number?: string | null
 }
 
 interface ReportData {
@@ -68,6 +69,9 @@ interface ReportData {
   prerequisiteDate: string | null
   prerequisiteMet: boolean
   prerequisiteReport: LinkedReport | null
+  prerequisiteChain: LinkedReport[]
+  unresolvedPrerequisiteDate: string | null
+  prerequisiteCycleDetected: boolean
   appliedToReport: LinkedReport | null   // set if this is a negative PDF absorbed into another JE
 }
 
@@ -114,7 +118,9 @@ function JePreviewTable({ preview, fmt }: { preview: Record<string, unknown>; fm
         <div className="text-gray-500 text-xs">
           Date: {String(preview.TxnDate ?? '')}
           {!!s?.includesPrerequisiteReport && (
-            <span className="ml-3 text-blue-600">Includes report {String(s.prerequisiteReportNumber ?? '')}</span>
+            <span className="ml-3 text-blue-600">
+              Includes {((s.prerequisiteReports as unknown[]) ?? []).length || 1} prior report(s)
+            </span>
           )}
         </div>
       </div>
@@ -146,7 +152,11 @@ function JePreviewTable({ preview, fmt }: { preview: Record<string, unknown>; fm
                     ? <span className="text-xs text-red-500 italic">{isBalancing ? 'Bank / AP account needed' : 'No account assigned'}</span>
                     : <span className="text-xs font-medium">{accountRef?.name ?? '—'}</span>
                   }
-                  {isPrereq && <span className="ml-1 text-xs text-purple-500">(prior report)</span>}
+                  {isPrereq && (
+                    <span className="ml-1 text-xs text-purple-500">
+                      (prior report{meta?.sourceRunDate ? ` ${String(meta.sourceRunDate)}` : ''})
+                    </span>
+                  )}
                   {isBalancing && <span className="ml-1 text-xs text-blue-500">(balancing)</span>}
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums text-xs">{postingType === 'Debit' ? fmt(amount) : ''}</td>
@@ -267,7 +277,8 @@ export default function ReportDetailPage() {
 
   const {
     upload, header, lineItems, customerTotal,
-    prerequisiteDate, prerequisiteMet, prerequisiteReport,
+    prerequisiteDate, prerequisiteMet, prerequisiteReport, prerequisiteChain,
+    unresolvedPrerequisiteDate, prerequisiteCycleDetected,
     appliedToReport,
   } = data
 
@@ -356,13 +367,26 @@ export default function ReportDetailPage() {
         )}
         {hasBankCharge && prerequisiteReport && (
           <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-blue-50 border border-blue-200 text-blue-800">
-            <p>
-              ✓ Journal Entry includes lines from prerequisite report{' '}
-              <a href={`/reports/${prerequisiteReport.id}`} className="underline font-semibold">
-                {prerequisiteReport.file_name}
-              </a>{' '}
-              (run {prerequisiteReport.run_date}).
-            </p>
+            {prerequisiteChain.length > 1 ? (
+              <>
+                <p className="font-semibold">Journal Entry includes {prerequisiteChain.length} prior reports in the carry-forward chain.</p>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                  {prerequisiteChain.map((report) => (
+                    <a key={report.id} href={`/reports/${report.id}`} className="underline">
+                      {report.file_name} (run {report.run_date})
+                    </a>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p>
+                ✓ Journal Entry includes lines from prerequisite report{' '}
+                <a href={`/reports/${prerequisiteReport.id}`} className="underline font-semibold">
+                  {prerequisiteReport.file_name}
+                </a>{' '}
+                (run {prerequisiteReport.run_date}).
+              </p>
+            )}
           </div>
         )}
 
@@ -371,10 +395,15 @@ export default function ReportDetailPage() {
           <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-red-50 border border-red-300 text-red-800">
             <p className="font-semibold">⚠ Prerequisite report required before this can be posted</p>
             <p className="mt-1">
-              This report contains an <strong>unapplied D.D.</strong> row referencing the debit from{' '}
-              <strong>{prerequisiteDate}</strong>. Upload that PDF first so the carry-forward balance is accounted for.
+              This carry-forward chain is missing the report from{' '}
+              <strong>{unresolvedPrerequisiteDate ?? prerequisiteDate}</strong>. Upload that PDF first so the carry-forward balance is accounted for.
             </p>
-            <a href="/" className="mt-2 inline-block underline font-semibold">Upload the {prerequisiteDate} report →</a>
+            <a href="/" className="mt-2 inline-block underline font-semibold">Upload the {unresolvedPrerequisiteDate ?? prerequisiteDate} report →</a>
+          </div>
+        )}
+        {prerequisiteCycleDetected && (
+          <div className="mt-4 rounded-lg px-4 py-3 text-sm bg-red-50 border border-red-300 text-red-800">
+            A circular prerequisite link was detected. The report chain must be corrected before this can be posted.
           </div>
         )}
 
@@ -517,13 +546,13 @@ export default function ReportDetailPage() {
           <>
             <p className="text-sm text-gray-500 mb-4">
               One Journal Entry per bank charge. Positive lines debit the assigned account;
-              negative lines credit it.{prerequisiteReport && ' Lines from the prerequisite report are included automatically.'}
+              negative lines credit it.{prerequisiteReport && ` Lines from ${prerequisiteChain.length || 1} prior report(s) are included automatically.`}
               {' '}A balancing Credit to your bank/AP account equals the net amount debited.
             </p>
             {!canPreviewJE && (
               <ul className="text-sm text-red-600 mb-3 list-disc list-inside space-y-0.5">
                 {!validationOk && <li>Fix total validation errors</li>}
-                {!prerequisiteMet && <li>Upload the prerequisite report from {prerequisiteDate} first</li>}
+                {!prerequisiteMet && <li>Upload the prerequisite report from {unresolvedPrerequisiteDate ?? prerequisiteDate} first</li>}
                 {hasUnmapped && <li>Assign a QBO account to all included rows</li>}
               </ul>
             )}

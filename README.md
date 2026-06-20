@@ -1,6 +1,6 @@
 # Pinch A Penny #144 — Auto Debit Parser
 
-Parses "R03989 Preauthorized Debit" PDF reports and prepares QuickBooks Online entries for review.
+Parses "R03989 Preauthorized Debit" PDF reports and prepares QuickBooks Online Journal Entries for review.
 
 ## Setup
 
@@ -34,7 +34,7 @@ Open [http://localhost:3000](http://localhost:3000)
 |------|-------------|
 | `/` | Upload Preauthorized Debit PDFs |
 | `/reports` | List of parsed reports |
-| `/reports/[id]` | Review a parsed report, edit mappings, preview QBO payload |
+| `/reports/[id]` | Review a parsed report, edit mappings, preview/push QBO sandbox Journal Entry |
 | `/mappings` | Configure accounting mapping rules |
 | `/settings` | QuickBooks Online connection settings |
 | `/audit` | Audit log of all events |
@@ -56,22 +56,37 @@ Tests cover the parser module against all 4 sample PDFs:
 
 ## QuickBooks Online Setup (Sandbox)
 
-> Production posting is **disabled by default** until the transaction type is confirmed.
+> Production posting is **disabled by default**. QBO posting must stay sandbox-only until explicitly approved.
 
 1. Create an app at [developer.intuit.com](https://developer.intuit.com)
 2. Add OAuth 2.0 credentials to `.env.local`
-3. Implement `GET /api/qbo/auth` (redirect to Intuit) and `GET /api/qbo/callback` (exchange code for tokens)
-4. Use `POST /api/qbo/push/[id]` (to be built) to push sandbox entries after approval
+3. Use `/settings` to connect or reconnect QuickBooks Online sandbox
+4. Set the Bank / AP balancing account in `/settings`
+5. Preview the Journal Entry from `/reports/[id]`
+6. Push to QBO sandbox only after manual review
 
-## TODO — Production QBO Checklist
+## Current QBO Handoff
 
-- [ ] Confirm transaction type with bookkeeper: JournalEntry / Expense / Check / bank-feed match
-- [ ] Implement QBO OAuth 2.0 callback + token refresh in `app/api/qbo/`
-- [ ] Implement `POST /api/qbo/push/[id]` with sandbox/production guard
-- [ ] Add "Push to QBO Sandbox" button on report review page
+- [x] QBO OAuth 2.0 callback + token refresh implemented in `app/api/qbo/`
+- [x] Sandbox JE preview implemented in `GET /api/qbo/preview/[id]`
+- [x] Sandbox push route implemented in `POST /api/qbo/push/[id]`
+- [x] Full carry-forward chain preview is balanced for sample chain:
+  - `6/04/26 -> 6/08/26 -> 6/11/26 -> 6/15/26`
+  - Debits `$33,601.65`; Credits `$33,601.65`; Difference `$0.00`
+- [x] QBO sandbox push completed for the 6/15/26 bank-charge report
+  - QBO Transaction ID `145`
+  - Intuit TID `1-6a36d711-0db4d72f5f46f29a27ec75e1`
+  - Verified back from QBO sandbox with Debits `$33,601.65`; Credits `$33,601.65`
+- [ ] Deploy local fix for preview proposal persistence before the next push
+  - Symptom: Push can show "No proposed Journal Entry found. Generate a preview first."
+  - Cause: preview used `upsert(... onConflict: 'upload_id')`, but `qbo_pushes.upload_id` is not unique.
+  - Local fix: preview now updates the latest existing proposal or inserts one; push reads the latest proposal row.
+- [ ] Deploy local AP vendor support
+  - QBO requires a Vendor entity when the balancing account is Accounts Payable.
+  - Sandbox vendor created: `Pinch A Penny #144` (`Vendor` ID `58`)
+  - Local fix: Settings can save `ap_vendor`; preview attaches it to AP balancing lines; push blocks AP pushes without it.
 - [ ] Encrypt OAuth tokens stored in `qbo_connections` table
 - [ ] Enable production flag after end-to-end sandbox test
-- [ ] Fill in QBO account IDs in accounting mappings (requires bookkeeper input)
 
 ## Parser Notes
 
@@ -79,4 +94,5 @@ Tests cover the parser module against all 4 sample PDFs:
 - Three-amount rows (SO, SR) are parsed as `(open_amount, discount_available, net_amount_due)`
 - Trailing-minus amounts like `2,229.98-` are correctly parsed as negative
 - `0/00/00` discount due dates are treated as null
-- Carry-forward rows (`RU` doc type, or remarks containing "unapplied D.D.") are flagged and should not be posted without special accounting treatment
+- Carry-forward rows (`RU` doc type, or remarks containing "unapplied D.D.") are excluded from the JE and replaced by actual rows from the referenced prior PDF chain
+- Report date matching normalizes leading-zero differences, so `6/8/26` and `6/08/26` resolve to the same prerequisite date

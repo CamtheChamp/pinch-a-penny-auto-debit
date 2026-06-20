@@ -1,4 +1,4 @@
-# Pinch A Penny Auto Debit Parser — CLAUDE.md
+# Pinch A Penny Auto Debit Parser — AGENTS.md
 
 Internal tool for Pinch A Penny Pool Patio & Spa Store #144.
 Parses "R03989 Preauthorized Debit" PDF reports and prepares QuickBooks Online Journal Entries.

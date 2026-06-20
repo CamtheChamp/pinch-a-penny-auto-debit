@@ -2,8 +2,8 @@
 
 **App**: Pinch A Penny #144 — Auto Debit Parser  
 **URL**: https://pinch-a-penny-auto-debit.vercel.app  
-**Current commit**: `b9bd9e18`  
-**Last updated**: 2026-06-19
+**Current commit**: `e3aacdf2`  
+**Last updated**: 2026-06-20
 
 ---
 
@@ -32,6 +32,8 @@
 - [x] RU rows with "unapplied D.D. M-D-YY" require the referenced PDF to be uploaded first
 - [x] Upload blocked from JE approval if prerequisite not met (red banner)
 - [x] Retroactive resolution — uploading an older PDF automatically unlocks waiting reports
+- [x] Multi-PDF carry-forward chains are resolved oldest-to-newest (example: `6/04/26 → 6/08/26 → 6/11/26 → 6/15/26`)
+- [x] Report date matching normalizes leading-zero differences (`6/8/26` matches `6/08/26`)
 
 ### Accounting Mappings
 - [x] Mappings page (`/mappings`) — full CRUD with QBO account picker (live fetch from QBO)
@@ -52,9 +54,10 @@
 
 ### QBO Journal Entry
 - [x] Single JE per bank charge — positive PDFs absorb their prerequisite (negative) PDF's lines
+- [x] Positive PDFs absorb the full negative-report chain, not just the immediate prerequisite
 - [x] Negative PDFs never generate their own JE — absorbed into the positive PDF's JE
 - [x] `GET /api/qbo/preview/[id]` — builds JE payload, persists to `qbo_pushes`
-  - Carry-forward (RU) row excluded; replaced by actual prerequisite lines
+  - Carry-forward (RU) rows excluded; replaced by actual prerequisite-chain lines
   - Lines from prior report tinted purple in preview, balancing line tinted blue
   - Description = remarks from PDF row
   - Balancing line auto-fills with saved Bank / AP account
@@ -96,9 +99,30 @@
 ## In Progress / TODO
 
 ### Sandbox End-to-End Test
-- [ ] Upload PDFs → assign accounts via mappings → preview JE → confirm balanced → push to sandbox
-- [ ] Verify transaction appears in QBO sandbox company
+- [x] Upload PDFs → assign accounts via mappings → preview JE → confirm balanced
+  - Production preview for upload `87d5e65e-ff63-4632-b520-e56910cd6d24` generated 33 JE lines
+  - Prior chain included: `6/04/26`, `6/08/26`, `6/11/26`
+  - Debits: `$33,601.65`; Credits: `$33,601.65`; Difference: `$0.00`
+  - Carry-forward placeholder lines included: `0`
+- [x] Push to QBO sandbox
+  - QBO Transaction ID: `145`
+  - Intuit TID: `1-6a36d711-0db4d72f5f46f29a27ec75e1`
+  - Environment: `sandbox`
+  - AP Vendor created/used in sandbox: `Pinch A Penny #144` (`Vendor` ID `58`)
+- [x] Verify transaction appears in QBO sandbox company
+  - Fetched JE `145` back from QBO sandbox successfully
+  - Debits: `$33,601.65`; Credits: `$33,601.65`; Difference: `$0.00`
+  - Balancing AP line has Vendor entity `Pinch A Penny #144`
 - [ ] Answer remaining Intuit compliance questions
+
+### Deployment Handoff
+- [ ] Deploy the local QBO proposal persistence fix
+  - Run `vercel login`, then `vercel --prod --yes`; or fix `.git` ACL and push `master` if Vercel Git integration is preferred.
+  - Changed files waiting locally include `app/api/qbo/preview/[id]/route.ts`, `app/api/qbo/push/[id]/route.ts`, `app/api/qbo/vendors/route.ts`, `lib/report-chain.ts`, `lib/report-dates.ts`, and related report/upload/settings UI/API updates.
+  - Local fix written: preview now explicitly updates the latest existing `qbo_pushes` row or inserts one, and push reads the latest proposal via `maybeSingle()`.
+  - Local AP vendor support written: Settings can save `ap_vendor`; preview attaches Vendor entity when the balancing account is Accounts Payable; push blocks AP pushes without a vendor.
+  - Verification already run locally: `npx tsc --noEmit --types jest` passed; `npm test -- --runInBand` passed (27/27).
+  - Still not deployed: Vercel CLI token is invalid / requires login, and Git commit/push is blocked by a Windows ACL deny on `.git` preventing creation of `.git/index.lock`.
 
 ### Production QBO
 - [ ] Enable production flag — only after bookkeeper verifies sandbox test

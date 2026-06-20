@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server'
+import { resolvePrerequisiteChain } from '@/lib/report-chain'
+import { db } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
-import { db } from '@/lib/db'
 
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id]'>) {
   const { id } = await ctx.params
@@ -16,24 +17,16 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
   if (uploadRes.error) return Response.json({ error: 'Not found' }, { status: 404 })
 
   const upload = uploadRes.data
+  const prerequisiteChain = await resolvePrerequisiteChain(upload)
 
   // Resolve prerequisite report info if one is required
   let prerequisiteReport: { id: string; file_name: string; run_date: string } | null = null
-  if (upload.prerequisite_date) {
-    if (upload.prerequisite_upload_id) {
-      const { data: priorUpload } = await db
-        .from('pdf_uploads')
-        .select('id, file_name')
-        .eq('id', upload.prerequisite_upload_id)
-        .single()
-      const { data: priorHeader } = await db
-        .from('report_headers')
-        .select('run_date')
-        .eq('upload_id', upload.prerequisite_upload_id)
-        .single()
-      if (priorUpload) {
-        prerequisiteReport = { id: priorUpload.id, file_name: priorUpload.file_name, run_date: priorHeader?.run_date ?? upload.prerequisite_date }
-      }
+  const directPrerequisite = prerequisiteChain.reports.at(-1)
+  if (directPrerequisite) {
+    prerequisiteReport = {
+      id: directPrerequisite.upload.id,
+      file_name: directPrerequisite.upload.file_name,
+      run_date: directPrerequisite.header?.run_date ?? upload.prerequisite_date ?? '',
     }
   }
 
@@ -65,8 +58,16 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
     lineItems: itemsRes.data ?? [],
     customerTotal: totalRes.data,
     prerequisiteDate: upload.prerequisite_date ?? null,
-    prerequisiteMet: upload.prerequisite_date ? !!upload.prerequisite_upload_id : true,
+    prerequisiteMet: upload.prerequisite_date ? !prerequisiteChain.unresolvedDate && !prerequisiteChain.cycleDetected : true,
     prerequisiteReport,
+    prerequisiteChain: prerequisiteChain.reports.map((report) => ({
+      id: report.upload.id,
+      file_name: report.upload.file_name,
+      run_date: report.header?.run_date ?? '',
+      report_number: report.header?.report_number ?? null,
+    })),
+    unresolvedPrerequisiteDate: prerequisiteChain.unresolvedDate,
+    prerequisiteCycleDetected: prerequisiteChain.cycleDetected,
     appliedToReport,
   })
 }
