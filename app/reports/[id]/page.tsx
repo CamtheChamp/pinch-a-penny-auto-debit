@@ -242,13 +242,18 @@ export default function ReportDetailPage() {
   }
 
   async function pushToQbo() {
-    if (!confirm('Push this Journal Entry to QuickBooks sandbox? This will create a real transaction in your sandbox company.')) return
+    const isProd = (preview?._environment as string | undefined) === 'production'
+    const confirmMsg = isProd
+      ? 'Push this Journal Entry to your live QuickBooks company? This will create a real transaction.'
+      : 'Push this Journal Entry to QuickBooks sandbox? This will create a transaction in your sandbox company.'
+    if (!confirm(confirmMsg)) return
     setPushing(true)
     setPushResult(null)
     const res = await fetch(`/api/qbo/push/${id}`, { method: 'POST' })
     const json = await res.json()
     if (res.ok) {
-      setPushResult({ ok: true, message: 'Journal Entry created in QuickBooks sandbox.', txnId: json.qboTransactionId, intuitTid: json.intuitTid })
+      const envLabel = json.environment === 'production' ? 'QuickBooks' : 'QuickBooks sandbox'
+      setPushResult({ ok: true, message: `Journal Entry created in ${envLabel}.`, txnId: json.qboTransactionId, intuitTid: json.intuitTid })
       const fresh = await fetch(`/api/reports/${id}`).then((r) => r.json())
       setData(fresh)
     } else {
@@ -570,7 +575,11 @@ export default function ReportDetailPage() {
                   disabled={pushing || upload.status === 'pushed'}
                   className="bg-green-600 text-white text-sm px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
                 >
-                  {pushing ? 'Pushing…' : upload.status === 'pushed' ? 'Already Pushed' : 'Push to QBO Sandbox'}
+                  {pushing
+                    ? 'Pushing…'
+                    : upload.status === 'pushed'
+                      ? 'Already Pushed'
+                      : preview._environment === 'production' ? 'Push to QuickBooks' : 'Push to QBO Sandbox'}
                 </button>
               )}
             </div>
@@ -591,8 +600,14 @@ export default function ReportDetailPage() {
 
             {preview && (
               <div className="mt-4">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 text-xs text-yellow-800 mb-3">
-                  Sandbox preview only — not posted to QuickBooks.
+                <div className={`rounded-lg px-4 py-2 text-xs mb-3 border ${
+                  preview._environment === 'production'
+                    ? 'bg-red-50 border-red-200 text-red-800'
+                    : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+                }`}>
+                  {preview._environment === 'production'
+                    ? '⚠ Connected to live QuickBooks — preview only, not yet posted. Pushing will create a real transaction.'
+                    : 'Sandbox preview only — not posted to QuickBooks.'}
                 </div>
                 {/* Warnings */}
                 {(preview._warnings as string[])?.length > 0 && (

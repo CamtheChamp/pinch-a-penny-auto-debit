@@ -230,6 +230,14 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     ? `${header?.report_number ?? ''} + ${includedReportNumbers.join(' + ')}`
     : (header?.report_number ?? '')
 
+  const { data: connection } = await db
+    .from('qbo_connections')
+    .select('environment')
+    .limit(1)
+    .maybeSingle()
+
+  const environment = connection?.environment ?? process.env.QBO_ENVIRONMENT ?? 'sandbox'
+
   const journalEntry = {
     TxnDate: txnDate,
     DocNumber: header?.report_number,
@@ -249,17 +257,12 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
       prerequisiteReportNumber: prerequisiteSummaries.at(-1)?.reportNumber ?? null,
       prerequisiteReports: prerequisiteSummaries,
     },
+    _environment: environment,
   }
-
-  const { data: connection } = await db
-    .from('qbo_connections')
-    .select('environment')
-    .limit(1)
-    .maybeSingle()
 
   const pendingPush = {
     upload_id: id,
-    environment: connection?.environment ?? process.env.QBO_ENVIRONMENT ?? 'sandbox',
+    environment,
     proposed_payload: journalEntry,
     status: 'pending',
   }

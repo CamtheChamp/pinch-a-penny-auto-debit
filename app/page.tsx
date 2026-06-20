@@ -3,12 +3,45 @@
 import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
+interface LineItemSummary {
+  id: string
+  remarks: string
+  treatment: string
+  is_carry_forward: boolean
+  qbo_account_name: string | null
+  net_amount_due: number | null
+}
+
+function fmtAmt(n: number | null) {
+  if (n === null || n === undefined) return '—'
+  const abs = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2 })
+  return n < 0 ? `-$${abs}` : `$${abs}`
+}
+
 export default function UploadPage() {
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [results, setResults] = useState<{ name: string; id?: string; error?: string; duplicateId?: string }[]>([])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [summaries, setSummaries] = useState<Record<string, LineItemSummary[]>>({})
+  const [loadingSummary, setLoadingSummary] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
+
+  async function toggleSummary(uploadId: string) {
+    if (expandedId === uploadId) {
+      setExpandedId(null)
+      return
+    }
+    setExpandedId(uploadId)
+    if (!summaries[uploadId]) {
+      setLoadingSummary(uploadId)
+      const res = await fetch(`/api/reports/${uploadId}`)
+      const json = await res.json()
+      setSummaries((prev) => ({ ...prev, [uploadId]: json.lineItems ?? [] }))
+      setLoadingSummary(null)
+    }
+  }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
@@ -111,15 +144,53 @@ export default function UploadPage() {
               ) : r.error ? (
                 <p><strong>{r.name}</strong>: {r.error}</p>
               ) : (
-                <p>
-                  <strong>{r.name}</strong> parsed.{' '}
-                  <button
-                    className="underline font-semibold"
-                    onClick={() => router.push(`/reports/${r.id}`)}
-                  >
-                    Review →
-                  </button>
-                </p>
+                <div>
+                  <p className="flex items-center justify-between gap-2">
+                    <span>
+                      <strong>{r.name}</strong> parsed.{' '}
+                      <button
+                        className="underline font-semibold"
+                        onClick={() => router.push(`/reports/${r.id}`)}
+                      >
+                        Review →
+                      </button>
+                    </span>
+                    <button
+                      onClick={() => toggleSummary(r.id!)}
+                      title="Quick summary of transactions and assigned accounts"
+                      className="shrink-0 w-5 h-5 flex items-center justify-center rounded-full border border-green-400 text-green-700 hover:bg-green-100 text-xs font-bold leading-none"
+                    >
+                      {expandedId === r.id ? '−' : '+'}
+                    </button>
+                  </p>
+                  {expandedId === r.id && (
+                    <div className="mt-3 bg-white border border-green-200 rounded-lg divide-y divide-gray-100">
+                      {loadingSummary === r.id ? (
+                        <p className="px-3 py-2 text-xs text-gray-400">Loading…</p>
+                      ) : !summaries[r.id!]?.length ? (
+                        <p className="px-3 py-2 text-xs text-gray-400">No line items.</p>
+                      ) : summaries[r.id!].map((item) => (
+                        <div key={item.id} className="px-3 py-2 flex items-center justify-between gap-3 text-xs">
+                          <div className="min-w-0">
+                            <p className="text-gray-800 truncate">{item.remarks}</p>
+                            <p className="text-gray-400">{fmtAmt(item.net_amount_due)}</p>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            {item.is_carry_forward ? (
+                              <span className="text-orange-600 font-medium">Carry-Forward</span>
+                            ) : item.treatment === 'ignore' ? (
+                              <span className="text-gray-400">Ignored</span>
+                            ) : item.qbo_account_name ? (
+                              <span className="text-green-700 font-medium">{item.qbo_account_name}</span>
+                            ) : (
+                              <span className="text-red-500 font-medium">Needs account</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ))}
