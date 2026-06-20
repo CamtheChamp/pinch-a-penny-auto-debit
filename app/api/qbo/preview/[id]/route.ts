@@ -251,9 +251,15 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     },
   }
 
+  const { data: connection } = await db
+    .from('qbo_connections')
+    .select('environment')
+    .limit(1)
+    .maybeSingle()
+
   const pendingPush = {
     upload_id: id,
-    environment: 'sandbox',
+    environment: connection?.environment ?? process.env.QBO_ENVIRONMENT ?? 'sandbox',
     proposed_payload: journalEntry,
     status: 'pending',
   }
