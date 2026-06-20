@@ -130,7 +130,8 @@
 - [ ] Token encryption at rest (currently stored plaintext in Supabase)
 
 ### Audit Log Page
-- [ ] `/audit` route exists; UI not built yet
+- [x] `/audit` page — table of all events (upload, manual_edit, qbo_push_success, qbo_push_error)
+  - Filter chips by event type, color-coded badges, expandable JSON payload per row, links to source report
 
 ### Nice-to-Have
 - [ ] Token refresh test (verify auto-refresh works after 1-hour expiry)
