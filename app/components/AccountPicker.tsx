@@ -9,6 +9,7 @@ export interface QboAccount {
   fullName: string
   type: string
   subType: string
+  acctNum?: string | null
 }
 
 interface Props {
@@ -60,7 +61,8 @@ export default function AccountPicker({ value, accounts, onChange, placeholder =
   const filtered = accounts.filter((a) =>
     search === '' ||
     a.fullName.toLowerCase().includes(search.toLowerCase()) ||
-    a.type.toLowerCase().includes(search.toLowerCase())
+    a.type.toLowerCase().includes(search.toLowerCase()) ||
+    (a.acctNum ?? '').toLowerCase().includes(search.toLowerCase())
   ).slice(0, 50)
 
   function select(account: QboAccount) {
@@ -129,7 +131,7 @@ export default function AccountPicker({ value, accounts, onChange, placeholder =
                   <p className="text-xs font-medium text-gray-800">{a.fullName}</p>
                   <p className="text-xs text-gray-400">{a.type} · {a.subType}</p>
                 </div>
-                <span className="text-xs font-mono text-gray-300 ml-2">#{a.id}</span>
+                <span className="text-xs font-mono text-gray-300 ml-2 shrink-0">{a.acctNum ? `#${a.acctNum}` : ''}</span>
               </li>
             ))}
           </ul>
