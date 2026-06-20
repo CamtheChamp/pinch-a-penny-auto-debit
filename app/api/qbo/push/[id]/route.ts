@@ -58,9 +58,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     return Response.json({ error: 'No proposed Journal Entry found. Generate a preview first.' }, { status: 404 })
   }
 
-  if (push.status === 'pushed') {
-    return Response.json({ error: 'This report has already been pushed to QuickBooks.', qboTransactionId: push.qbo_transaction_id }, { status: 409 })
-  }
+  const isRepush = push.status === 'pushed' && !!push.qbo_transaction_id
 
   // Block if any line still needs a QBO account
   const proposed = push.proposed_payload as Record<string, unknown>
@@ -100,6 +98,33 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   const url = `${baseUrl}/${auth.realmId}/journalentry`
   const body = sanitizePayload(proposed)
 
+  // Re-push: edit the existing Journal Entry in place rather than creating a new one.
+  // Requires the current SyncToken, fetched fresh in case it changed since our last push.
+  if (isRepush) {
+    const getRes = await fetch(`${url}/${push.qbo_transaction_id}`, {
+      headers: {
+        Authorization: `Bearer ${auth.accessToken}`,
+        Accept: 'application/json',
+      },
+    })
+    if (!getRes.ok) {
+      const detail = await getRes.text()
+      return Response.json({
+        error: `Could not look up the existing Journal Entry in QuickBooks before updating it: ${detail}`,
+        httpStatus: getRes.status,
+      }, { status: 422 })
+    }
+    const existing = await getRes.json()
+    const syncToken = existing?.JournalEntry?.SyncToken
+    if (syncToken === undefined) {
+      return Response.json({
+        error: 'Could not read the existing Journal Entry\'s SyncToken from QuickBooks. Cannot safely update it.',
+      }, { status: 422 })
+    }
+    body.Id = push.qbo_transaction_id
+    body.SyncToken = syncToken
+  }
+
   const qboRes = await fetch(url, {
     method: 'POST',
     headers: {
@@ -112,6 +137,8 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
 
   const intuitTid = qboRes.headers.get('intuit_tid') ?? null
   const responseBody = await qboRes.json()
+  const errorEventType = isRepush ? 'qbo_repush_error' : 'qbo_push_error'
+  const successEventType = isRepush ? 'qbo_repush_success' : 'qbo_push_success'
 
   if (!qboRes.ok) {
     const errorMessage = parseQboFault(responseBody)
@@ -124,7 +151,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
 
     await db.from('audit_logs').insert({
       upload_id: id,
-      event_type: 'qbo_push_error',
+      event_type: errorEventType,
       payload: { httpStatus: qboRes.status, intuitTid, error: errorMessage, response: responseBody },
     })
 
@@ -150,9 +177,9 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
 
   await db.from('audit_logs').insert({
     upload_id: id,
-    event_type: 'qbo_push_success',
-    payload: { txnId, intuitTid, environment: auth.environment },
+    event_type: successEventType,
+    payload: { txnId, intuitTid, environment: auth.environment, repush: isRepush },
   })
 
-  return Response.json({ ok: true, qboTransactionId: txnId, intuitTid, environment: auth.environment })
+  return Response.json({ ok: true, qboTransactionId: txnId, intuitTid, environment: auth.environment, repushed: isRepush })
 }

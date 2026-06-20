@@ -5,7 +5,7 @@ export default function EulaPage() {
       <p className="text-sm text-gray-500 mb-6">Last updated: June 19, 2026</p>
 
       <p>
-        This application ("Pinch A Penny Auto Debit Parser") is an internal business tool
+        This application ("PennyWise Ledger") is an internal business tool
         operated exclusively by Pinch A Penny Pool Patio &amp; Spa Store #144 ("we," "us," or "our")
         for the purpose of processing preauthorized debit PDF reports and preparing QuickBooks
         Online journal entries.

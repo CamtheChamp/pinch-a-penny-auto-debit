@@ -243,17 +243,20 @@ export default function ReportDetailPage() {
 
   async function pushToQbo() {
     const isProd = (preview?._environment as string | undefined) === 'production'
-    const confirmMsg = isProd
-      ? 'Push this Journal Entry to your live QuickBooks company? This will create a real transaction.'
-      : 'Push this Journal Entry to QuickBooks sandbox? This will create a transaction in your sandbox company.'
+    const isRepush = upload.status === 'pushed'
+    const envLabel = isProd ? 'your live QuickBooks company' : 'QuickBooks sandbox'
+    const confirmMsg = isRepush
+      ? `Update the existing Journal Entry in ${envLabel} with these changes? This edits the transaction already posted there.`
+      : `Push this Journal Entry to ${envLabel}? This will create a${isProd ? ' real' : ''} transaction.`
     if (!confirm(confirmMsg)) return
     setPushing(true)
     setPushResult(null)
     const res = await fetch(`/api/qbo/push/${id}`, { method: 'POST' })
     const json = await res.json()
     if (res.ok) {
-      const envLabel = json.environment === 'production' ? 'QuickBooks' : 'QuickBooks sandbox'
-      setPushResult({ ok: true, message: `Journal Entry created in ${envLabel}.`, txnId: json.qboTransactionId, intuitTid: json.intuitTid })
+      const resultEnvLabel = json.environment === 'production' ? 'QuickBooks' : 'QuickBooks sandbox'
+      const verb = json.repushed ? 'updated in' : 'created in'
+      setPushResult({ ok: true, message: `Journal Entry ${verb} ${resultEnvLabel}.`, txnId: json.qboTransactionId, intuitTid: json.intuitTid })
       const fresh = await fetch(`/api/reports/${id}`).then((r) => r.json())
       setData(fresh)
     } else {
@@ -572,13 +575,15 @@ export default function ReportDetailPage() {
               {preview && (
                 <button
                   onClick={pushToQbo}
-                  disabled={pushing || upload.status === 'pushed'}
-                  className="bg-green-600 text-white text-sm px-4 py-2 rounded hover:bg-green-700 disabled:opacity-50"
+                  disabled={pushing}
+                  className={`text-white text-sm px-4 py-2 rounded disabled:opacity-50 ${
+                    upload.status === 'pushed' ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'
+                  }`}
                 >
                   {pushing
-                    ? 'Pushing…'
+                    ? (upload.status === 'pushed' ? 'Updating…' : 'Pushing…')
                     : upload.status === 'pushed'
-                      ? 'Already Pushed'
+                      ? (preview._environment === 'production' ? 'Re-push to QuickBooks' : 'Re-push to QBO Sandbox')
                       : preview._environment === 'production' ? 'Push to QuickBooks' : 'Push to QBO Sandbox'}
                 </button>
               )}

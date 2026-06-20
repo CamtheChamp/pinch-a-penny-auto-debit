@@ -1,6 +1,6 @@
-# Pinch A Penny #144 — Auto Debit Parser
+# PennyWise Ledger
 
-Parses "R03989 Preauthorized Debit" PDF reports and prepares QuickBooks Online Journal Entries for review.
+Internal tool for Pinch A Penny Pool Patio & Spa Store #144. Parses "R03989 Preauthorized Debit" PDF reports and prepares QuickBooks Online Journal Entries for review.
 
 ## Setup
 

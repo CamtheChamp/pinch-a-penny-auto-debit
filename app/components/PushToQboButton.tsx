@@ -38,11 +38,7 @@ export default function PushToQboButton({ uploadId }: { uploadId: string }) {
       .then((r) => r.json())
       .then((data: ReportData) => {
         if (cancelled) return
-        if (data.upload.status === 'pushed') {
-          setAlreadyPushed(true)
-          setReady(false)
-          return
-        }
+        setAlreadyPushed(data.upload.status === 'pushed')
         const netAmountDue = data.customerTotal?.net_amount_due ?? null
         const hasBankCharge = netAmountDue !== null && netAmountDue >= 0
         const validationOk = !!(
@@ -62,7 +58,10 @@ export default function PushToQboButton({ uploadId }: { uploadId: string }) {
   async function push(e: React.MouseEvent) {
     e.preventDefault()
     e.stopPropagation()
-    if (!confirm('Push this Journal Entry to QuickBooks? This will create a real transaction.')) return
+    const confirmMsg = alreadyPushed
+      ? 'Update the existing Journal Entry in QuickBooks with these changes? This edits the transaction already posted there.'
+      : 'Push this Journal Entry to QuickBooks? This will create a real transaction.'
+    if (!confirm(confirmMsg)) return
     setPushing(true)
     setError(null)
     const previewRes = await fetch(`/api/qbo/preview/${uploadId}`)
@@ -83,16 +82,24 @@ export default function PushToQboButton({ uploadId }: { uploadId: string }) {
     router.refresh()
   }
 
-  if (ready === null || alreadyPushed || !ready) return null
+  if (ready === null || !ready) {
+    return alreadyPushed
+      ? <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">Pushed</span>
+      : null
+  }
 
   return (
     <div className="mt-3 pt-3 border-t flex flex-col items-end gap-1">
       <button
         onClick={push}
         disabled={pushing}
-        className="bg-green-600 text-white text-xs px-3 py-1 rounded-full hover:bg-green-700 disabled:opacity-50 whitespace-nowrap"
+        className={`text-white text-xs px-3 py-1 rounded-full disabled:opacity-50 whitespace-nowrap ${
+          alreadyPushed ? 'bg-purple-600 hover:bg-purple-700' : 'bg-green-600 hover:bg-green-700'
+        }`}
       >
-        {pushing ? 'Pushing…' : 'Push to QuickBooks'}
+        {pushing
+          ? (alreadyPushed ? 'Updating…' : 'Pushing…')
+          : (alreadyPushed ? 'Re-push to QuickBooks' : 'Push to QuickBooks')}
       </button>
       {error && <span className="text-red-600 text-xs max-w-48 text-right">{error}</span>}
     </div>

@@ -6,8 +6,8 @@ export default function PrivacyPage() {
 
       <p>
         This Privacy Policy describes how Pinch A Penny Pool Patio &amp; Spa Store #144
-        ("we," "us," or "our") handles information in connection with the Pinch A Penny
-        Auto Debit Parser application.
+        ("we," "us," or "our") handles information in connection with the PennyWise Ledger
+        application.
       </p>
 
       <h2 className="text-xl font-semibold mt-6 mb-2">1. Information We Process</h2>

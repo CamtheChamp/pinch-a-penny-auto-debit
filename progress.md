@@ -1,6 +1,6 @@
 # Project Progress
 
-**App**: Pinch A Penny #144 — Auto Debit Parser  
+**App**: PennyWise Ledger (internal tool for Pinch A Penny #144)  
 **URL**: https://pinch-a-penny-auto-debit.vercel.app  
 **Current commit**: `e3aacdf2`  
 **Last updated**: 2026-06-20
