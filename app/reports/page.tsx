@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { db } from '@/lib/db'
+import PushToQboButton from '@/app/components/PushToQboButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,35 +68,37 @@ export default async function ReportsPage() {
           const hasErrors = r.parse_errors?.length > 0
 
           return (
-            <Link
+            <div
               key={r.id}
-              href={`/reports/${r.id}`}
-              className="block bg-white border rounded-xl px-5 py-4 hover:shadow-sm hover:border-blue-300 transition"
+              className="bg-white border rounded-xl px-5 py-4 hover:shadow-sm hover:border-blue-300 transition"
             >
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="font-semibold text-gray-900">{r.file_name}</p>
-                  <p className="text-sm text-gray-500 mt-0.5">
-                    {header?.report_number} · Run {header?.run_date} · {header?.customer_name}
-                  </p>
+              <Link href={`/reports/${r.id}`} className="block">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="font-semibold text-gray-900">{r.file_name}</p>
+                    <p className="text-sm text-gray-500 mt-0.5">
+                      {header?.report_number} · Run {header?.run_date} · {header?.customer_name}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <StatusBadge status={r.status} />
+                    {total && validBadge(allValid)}
+                    {hasErrors && (
+                      <span className="bg-yellow-100 text-yellow-700 text-xs px-2 py-0.5 rounded-full">
+                        {r.parse_errors.length} parse error{r.parse_errors.length !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <StatusBadge status={r.status} />
-                  {total && validBadge(allValid)}
-                  {hasErrors && (
-                    <span className="bg-yellow-100 text-yellow-700 text-xs px-2 py-0.5 rounded-full">
-                      {r.parse_errors.length} parse error{r.parse_errors.length !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                </div>
-              </div>
-              {total && (
-                <div className="mt-2 text-sm text-gray-600 flex gap-4">
-                  <span>Net Due: <strong className={(total.net_amount_due ?? 0) < 0 ? 'text-green-700' : ''}>{fmtAmt(total.net_amount_due)}</strong></span>
-                  <span>Open: <strong>{fmtAmt(total.open_amount)}</strong></span>
-                </div>
-              )}
-            </Link>
+                {total && (
+                  <div className="mt-2 text-sm text-gray-600 flex gap-4">
+                    <span>Net Due: <strong className={(total.net_amount_due ?? 0) < 0 ? 'text-green-700' : ''}>{fmtAmt(total.net_amount_due)}</strong></span>
+                    <span>Open: <strong>{fmtAmt(total.open_amount)}</strong></span>
+                  </div>
+                )}
+              </Link>
+              <PushToQboButton uploadId={r.id} />
+            </div>
           )
         })}
       </div>

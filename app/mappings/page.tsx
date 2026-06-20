@@ -39,6 +39,9 @@ export default function MappingsPage() {
   const [draft, setDraft] = useState<Omit<Mapping, 'id'>>(BLANK)
   const [saving, setSaving] = useState(false)
   const [accounts, setAccounts] = useState<QboAccount[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [rowDraft, setRowDraft] = useState<Mapping | null>(null)
+  const [rowSaving, setRowSaving] = useState(false)
 
   async function load() {
     const [mappingsRes, accountsRes] = await Promise.all([
@@ -96,6 +99,31 @@ export default function MappingsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     })
+  }
+
+  function startEdit(m: Mapping) {
+    setEditingId(m.id)
+    setRowDraft({ ...m })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setRowDraft(null)
+  }
+
+  async function saveRowEdit() {
+    if (!rowDraft) return
+    setRowSaving(true)
+    const { id, match_field, match_type, match_value, priority } = rowDraft
+    await fetch(`/api/mappings/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ match_field, match_type, match_value, priority }),
+    })
+    await load()
+    setRowSaving(false)
+    setEditingId(null)
+    setRowDraft(null)
   }
 
   if (loading) return <p className="text-gray-500">Loading…</p>
@@ -191,44 +219,100 @@ export default function MappingsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {mappings.map((m) => (
-              <tr key={m.id} className="hover:bg-gray-50">
-                <td className="px-4 py-2 font-mono text-xs">{m.match_field}</td>
-                <td className="px-4 py-2 text-xs">{m.match_type}</td>
-                <td className="px-4 py-2 font-mono text-xs">{m.match_value}</td>
-                <td className="px-4 py-2">
-                  <select
-                    value={m.treatment}
-                    onChange={(e) => updateField(m.id, 'treatment', e.target.value)}
-                    className="text-xs border rounded px-2 py-1"
-                  >
-                    {TREATMENTS.map((t) => <option key={t}>{t}</option>)}
-                  </select>
-                </td>
-                <td className="px-4 py-2">
-                  <AccountPicker
-                    value={{ id: m.qbo_account_id, name: m.qbo_account_name }}
-                    accounts={accounts}
-                    onChange={(acct) => updateAccount(m.id, acct)}
-                    placeholder={accounts.length ? 'Select account…' : '—'}
-                  />
-                </td>
-                <td className="px-4 py-2">
-                  <input
-                    defaultValue={m.default_memo ?? ''}
-                    onBlur={(e) => updateField(m.id, 'default_memo', e.target.value)}
-                    className="text-xs border rounded px-2 py-1 w-36"
-                    placeholder="Memo"
-                  />
-                </td>
-                <td className="px-4 py-2 text-right text-xs">{m.priority}</td>
-                <td className="px-4 py-2 text-right">
-                  <button onClick={() => deleteMapping(m.id)} className="text-red-400 hover:text-red-600 text-xs">
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {mappings.map((m) => {
+              const isEditing = editingId === m.id
+              return (
+                <tr key={m.id} className={`hover:bg-gray-50 ${isEditing ? 'bg-blue-50' : ''}`}>
+                  <td className="px-4 py-2 font-mono text-xs">
+                    {isEditing && rowDraft ? (
+                      <select
+                        value={rowDraft.match_field}
+                        onChange={(e) => setRowDraft((d) => d && { ...d, match_field: e.target.value })}
+                        className="text-xs border rounded px-1 py-1"
+                      >
+                        {MATCH_FIELDS.map((f) => <option key={f}>{f}</option>)}
+                      </select>
+                    ) : m.match_field}
+                  </td>
+                  <td className="px-4 py-2 text-xs">
+                    {isEditing && rowDraft ? (
+                      <select
+                        value={rowDraft.match_type}
+                        onChange={(e) => setRowDraft((d) => d && { ...d, match_type: e.target.value })}
+                        className="text-xs border rounded px-1 py-1"
+                      >
+                        {MATCH_TYPES.map((t) => <option key={t}>{t}</option>)}
+                      </select>
+                    ) : m.match_type}
+                  </td>
+                  <td className="px-4 py-2 font-mono text-xs">
+                    {isEditing && rowDraft ? (
+                      <input
+                        value={rowDraft.match_value}
+                        onChange={(e) => setRowDraft((d) => d && { ...d, match_value: e.target.value })}
+                        className="text-xs border rounded px-2 py-1 w-28"
+                      />
+                    ) : m.match_value}
+                  </td>
+                  <td className="px-4 py-2">
+                    <select
+                      value={m.treatment}
+                      onChange={(e) => updateField(m.id, 'treatment', e.target.value)}
+                      className="text-xs border rounded px-2 py-1"
+                    >
+                      {TREATMENTS.map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-4 py-2">
+                    <AccountPicker
+                      value={{ id: m.qbo_account_id, name: m.qbo_account_name }}
+                      accounts={accounts}
+                      onChange={(acct) => updateAccount(m.id, acct)}
+                      placeholder={accounts.length ? 'Select account…' : '—'}
+                    />
+                  </td>
+                  <td className="px-4 py-2">
+                    <input
+                      defaultValue={m.default_memo ?? ''}
+                      onBlur={(e) => updateField(m.id, 'default_memo', e.target.value)}
+                      className="text-xs border rounded px-2 py-1 w-36"
+                      placeholder="Memo"
+                    />
+                  </td>
+                  <td className="px-4 py-2 text-right text-xs">
+                    {isEditing && rowDraft ? (
+                      <input
+                        type="number"
+                        value={rowDraft.priority}
+                        onChange={(e) => setRowDraft((d) => d && { ...d, priority: parseInt(e.target.value) || 0 })}
+                        className="text-xs border rounded px-2 py-1 w-16 text-right"
+                      />
+                    ) : m.priority}
+                  </td>
+                  <td className="px-4 py-2 text-right whitespace-nowrap">
+                    {isEditing ? (
+                      <>
+                        <button onClick={saveRowEdit} disabled={rowSaving} className="text-blue-600 hover:text-blue-800 text-xs font-medium disabled:opacity-50">
+                          {rowSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button onClick={cancelEdit} className="text-gray-400 hover:text-gray-600 text-xs ml-3">
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => startEdit(m)} className="text-blue-500 hover:text-blue-700 text-xs">
+                          Edit
+                        </button>
+                        <button onClick={() => deleteMapping(m.id)} className="text-red-400 hover:text-red-600 text-xs ml-3">
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
         {!mappings.length && (
