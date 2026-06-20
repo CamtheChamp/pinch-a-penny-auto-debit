@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface QboAccount {
   id: string
@@ -20,12 +21,17 @@ interface Props {
 export default function AccountPicker({ value, accounts, onChange, placeholder = 'Select account…' }: Props) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const containerRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current && !containerRef.current.contains(e.target as Node) &&
+        menuRef.current && !menuRef.current.contains(e.target as Node)
+      ) {
         setOpen(false)
         setSearch('')
       }
@@ -35,7 +41,20 @@ export default function AccountPicker({ value, accounts, onChange, placeholder =
   }, [])
 
   useEffect(() => {
-    if (open) inputRef.current?.focus()
+    if (open) {
+      inputRef.current?.focus()
+      const updatePosition = () => {
+        const rect = containerRef.current?.getBoundingClientRect()
+        if (rect) setMenuPos({ top: rect.bottom + window.scrollY + 4, left: rect.left + window.scrollX })
+      }
+      updatePosition()
+      window.addEventListener('scroll', updatePosition, true)
+      window.addEventListener('resize', updatePosition)
+      return () => {
+        window.removeEventListener('scroll', updatePosition, true)
+        window.removeEventListener('resize', updatePosition)
+      }
+    }
   }, [open])
 
   const filtered = accounts.filter((a) =>
@@ -79,8 +98,12 @@ export default function AccountPicker({ value, accounts, onChange, placeholder =
         </span>
       </button>
 
-      {open && (
-        <div className="absolute z-50 mt-1 w-72 bg-white border border-gray-200 rounded-lg shadow-lg">
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={menuRef}
+          style={{ position: 'absolute', top: menuPos.top, left: menuPos.left }}
+          className="z-50 w-72 bg-white border border-gray-200 rounded-lg shadow-lg"
+        >
           <div className="p-2 border-b">
             <input
               ref={inputRef}
@@ -110,7 +133,8 @@ export default function AccountPicker({ value, accounts, onChange, placeholder =
               </li>
             ))}
           </ul>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
