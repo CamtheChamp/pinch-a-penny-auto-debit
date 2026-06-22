@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 import { getValidAccessToken, QboAuthError } from '@/lib/qbo-auth'
 
 export const dynamic = 'force-dynamic'
@@ -45,11 +45,16 @@ function sanitizePayload(proposed: Record<string, unknown>): Record<string, unkn
 export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
 
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   // Load the proposed JE payload
   const { data: push } = await db
     .from('qbo_pushes')
     .select('*')
     .eq('upload_id', id)
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()
@@ -86,7 +91,7 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
   // Get a valid (auto-refreshed) access token
   let auth: { accessToken: string; realmId: string; environment: string }
   try {
-    auth = await getValidAccessToken()
+    auth = await getValidAccessToken(user.id)
   } catch (e) {
     if (e instanceof QboAuthError) {
       return Response.json({ error: e.message, code: e.code }, { status: 401 })
@@ -147,10 +152,11 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
       status: 'error',
       qbo_response: responseBody,
       intuit_tid: intuitTid,
-    }).eq('upload_id', id)
+    }).eq('upload_id', id).eq('user_id', user.id)
 
     await db.from('audit_logs').insert({
       upload_id: id,
+      user_id: user.id,
       event_type: errorEventType,
       payload: { httpStatus: qboRes.status, intuitTid, error: errorMessage, response: responseBody },
     })
@@ -171,12 +177,13 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ id: strin
     qbo_transaction_id: txnId,
     intuit_tid: intuitTid,
     pushed_at: new Date().toISOString(),
-  }).eq('upload_id', id)
+  }).eq('upload_id', id).eq('user_id', user.id)
 
-  await db.from('pdf_uploads').update({ status: 'pushed' }).eq('id', id)
+  await db.from('pdf_uploads').update({ status: 'pushed' }).eq('id', id).eq('user_id', user.id)
 
   await db.from('audit_logs').insert({
     upload_id: id,
+    user_id: user.id,
     event_type: successEventType,
     payload: { txnId, intuitTid, environment: auth.environment, repush: isRepush },
   })

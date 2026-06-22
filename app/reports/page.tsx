@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { db } from '@/lib/db'
+import { redirect } from 'next/navigation'
+import { getServerSupabase } from '@/lib/supabase-server'
 import PushToQboButton from '@/app/components/PushToQboButton'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,10 @@ function validBadge(ok: boolean | null) {
 }
 
 export default async function ReportsPage() {
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) redirect('/login')
+
   const { data: reports, error } = await db
     .from('pdf_uploads')
     .select(`
@@ -41,6 +46,7 @@ export default async function ReportsPage() {
       report_headers ( report_number, run_date, customer_name ),
       customer_totals ( open_amount, net_amount_due, open_amount_match, discount_match, net_amount_match )
     `)
+    .eq('user_id', user.id)
     .order('uploaded_at', { ascending: false }) as { data: UploadRow[] | null; error: unknown }
 
   if (error) {

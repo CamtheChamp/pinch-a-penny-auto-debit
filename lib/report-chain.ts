@@ -1,4 +1,4 @@
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 import { sameReportDate } from '@/lib/report-dates'
 
 export interface UploadWithPrerequisite {
@@ -26,13 +26,15 @@ export interface ReportChainResult {
 
 export async function resolvePrerequisiteChain(
   upload: UploadWithPrerequisite,
+  userId: string,
 ): Promise<ReportChainResult> {
+  const db = await getServerSupabase()
   const reports: ReportChainNode[] = []
   const seen = new Set<string>([upload.id])
   let current = upload
 
   while (current.prerequisite_date) {
-    const prerequisiteUploadId = current.prerequisite_upload_id ?? await findUploadIdByRunDate(current.prerequisite_date)
+    const prerequisiteUploadId = current.prerequisite_upload_id ?? await findUploadIdByRunDate(current.prerequisite_date, userId)
 
     if (!prerequisiteUploadId) {
       return { reports, unresolvedDate: current.prerequisite_date, cycleDetected: false }
@@ -47,6 +49,7 @@ export async function resolvePrerequisiteChain(
       .from('pdf_uploads')
       .select('id, file_name, prerequisite_date, prerequisite_upload_id')
       .eq('id', prerequisiteUploadId)
+      .eq('user_id', userId)
       .single()
 
     if (error || !priorUpload) {
@@ -58,6 +61,7 @@ export async function resolvePrerequisiteChain(
       .from('report_headers')
       .select('report_number, run_date')
       .eq('upload_id', prior.id)
+      .eq('user_id', userId)
       .single()
 
     reports.unshift({
@@ -71,10 +75,12 @@ export async function resolvePrerequisiteChain(
   return { reports, unresolvedDate: null, cycleDetected: false }
 }
 
-async function findUploadIdByRunDate(runDate: string): Promise<string | null> {
+async function findUploadIdByRunDate(runDate: string, userId: string): Promise<string | null> {
+  const db = await getServerSupabase()
   const { data: headers } = await db
     .from('report_headers')
     .select('upload_id, run_date')
+    .eq('user_id', userId)
 
   const match = headers?.find((header: { upload_id: string; run_date: string | null }) =>
     sameReportDate(header.run_date, runDate)

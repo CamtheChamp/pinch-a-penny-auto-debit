@@ -1,4 +1,4 @@
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 
 const CLIENT_ID = process.env.QBO_CLIENT_ID!
 const CLIENT_SECRET = process.env.QBO_CLIENT_SECRET!
@@ -19,12 +19,13 @@ export class QboAuthError extends Error {
   }
 }
 
-export async function getValidAccessToken(): Promise<{ accessToken: string; realmId: string; environment: string }> {
-  const { data: conn } = await db
+export async function getValidAccessToken(userId: string): Promise<{ accessToken: string; realmId: string; environment: string }> {
+  const supabase = await getServerSupabase()
+  const { data: conn } = await supabase
     .from('qbo_connections')
     .select('*')
-    .limit(1)
-    .single<QboConnection>()
+    .eq('user_id', userId)
+    .maybeSingle<QboConnection>()
 
   if (!conn) throw new QboAuthError('no_connection', 'No QBO connection found. Connect via Settings.')
 
@@ -62,13 +63,13 @@ export async function getValidAccessToken(): Promise<{ accessToken: string; real
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
   const refreshExpiresAt = new Date(Date.now() + tokens.x_refresh_token_expires_in * 1000).toISOString()
 
-  await db.from('qbo_connections').update({
+  await supabase.from('qbo_connections').update({
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     expires_at: expiresAt,
     refresh_expires_at: refreshExpiresAt,
     updated_at: new Date().toISOString(),
-  }).eq('realm_id', conn.realm_id)
+  }).eq('user_id', userId)
 
   return { accessToken: tokens.access_token, realmId: conn.realm_id, environment: conn.environment }
 }

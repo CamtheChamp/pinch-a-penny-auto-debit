@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { db } from '@/lib/db'
+import { redirect } from 'next/navigation'
+import { getServerSupabase } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,10 +29,14 @@ export default async function AuditPage({
   searchParams: Promise<{ event?: string }>
 }) {
   const { event } = await searchParams
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) redirect('/login')
 
   let query = db
     .from('audit_logs')
     .select('*')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(200)
 

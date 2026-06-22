@@ -1,3 +1,4 @@
+import { getServerSupabase } from '@/lib/supabase-server'
 import { getValidAccessToken, QboAuthError } from '@/lib/qbo-auth'
 
 export const dynamic = 'force-dynamic'
@@ -8,9 +9,13 @@ const QBO_API_BASE = {
 }
 
 export async function GET() {
+  const supabase = await getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   let auth: { accessToken: string; realmId: string; environment: string }
   try {
-    auth = await getValidAccessToken()
+    auth = await getValidAccessToken(user.id)
   } catch (e) {
     if (e instanceof QboAuthError) {
       return Response.json({ error: e.message, code: e.code }, { status: 401 })

@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server'
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 import { resolvePrerequisiteChain } from '@/lib/report-chain'
 
 export const dynamic = 'force-dynamic'
@@ -61,20 +61,23 @@ function buildJeLine(
 // Does NOT post to QuickBooks — posting requires a separate confirmed step.
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview/[id]'>) {
   const { id } = await ctx.params
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const [
     uploadRes, itemsRes, totalRes, headerRes, bankSettingRes, apVendorSettingRes,
     discountEnabledSettingRes, discountInventorySettingRes, discountExpenseSettingRes,
   ] = await Promise.all([
-    db.from('pdf_uploads').select('*').eq('id', id).single(),
-    db.from('line_items').select('*').eq('upload_id', id).order('sort_order'),
-    db.from('customer_totals').select('*').eq('upload_id', id).single(),
-    db.from('report_headers').select('*').eq('upload_id', id).single(),
-    db.from('app_settings').select('value').eq('key', 'bank_account').single(),
-    db.from('app_settings').select('value').eq('key', 'ap_vendor').single(),
-    db.from('app_settings').select('value').eq('key', 'discount_adjustment_enabled').single(),
-    db.from('app_settings').select('value').eq('key', 'discount_inventory_account').single(),
-    db.from('app_settings').select('value').eq('key', 'discount_expense_account').single(),
+    db.from('pdf_uploads').select('*').eq('id', id).eq('user_id', user.id).single(),
+    db.from('line_items').select('*').eq('upload_id', id).eq('user_id', user.id).order('sort_order'),
+    db.from('customer_totals').select('*').eq('upload_id', id).eq('user_id', user.id).single(),
+    db.from('report_headers').select('*').eq('upload_id', id).eq('user_id', user.id).single(),
+    db.from('app_settings').select('value').eq('key', 'bank_account').eq('user_id', user.id).single(),
+    db.from('app_settings').select('value').eq('key', 'ap_vendor').eq('user_id', user.id).single(),
+    db.from('app_settings').select('value').eq('key', 'discount_adjustment_enabled').eq('user_id', user.id).single(),
+    db.from('app_settings').select('value').eq('key', 'discount_inventory_account').eq('user_id', user.id).single(),
+    db.from('app_settings').select('value').eq('key', 'discount_expense_account').eq('user_id', user.id).single(),
   ])
 
   const bankAccount = bankSettingRes.data?.value as { id: string; name: string; type?: string } | null ?? null
@@ -96,6 +99,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     .from('pdf_uploads')
     .select('id')
     .eq('prerequisite_upload_id', id)
+    .eq('user_id', user.id)
     .limit(1)
     .single()
   if (downstream || netAmountDue < 0) {
@@ -106,7 +110,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     }, { status: 422 })
   }
 
-  const prerequisiteChain = await resolvePrerequisiteChain(upload)
+  const prerequisiteChain = await resolvePrerequisiteChain(upload, user.id)
 
   // Block if any prerequisite PDF in the carry-forward chain hasn't been uploaded yet
   if (prerequisiteChain.unresolvedDate) {
@@ -138,8 +142,8 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
 
   for (const chainReport of prerequisiteChain.reports) {
     const [itemsRes, totalRes] = await Promise.all([
-      db.from('line_items').select('*').eq('upload_id', chainReport.upload.id).order('sort_order'),
-      db.from('customer_totals').select('*').eq('upload_id', chainReport.upload.id).single(),
+      db.from('line_items').select('*').eq('upload_id', chainReport.upload.id).eq('user_id', user.id).order('sort_order'),
+      db.from('customer_totals').select('*').eq('upload_id', chainReport.upload.id).eq('user_id', user.id).single(),
     ])
 
     const chainTotal = totalRes.data
@@ -287,7 +291,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
   const { data: connection } = await db
     .from('qbo_connections')
     .select('environment')
-    .limit(1)
+    .eq('user_id', user.id)
     .maybeSingle()
 
   const environment = connection?.environment ?? process.env.QBO_ENVIRONMENT ?? 'sandbox'
@@ -318,6 +322,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
   }
 
   const pendingPush = {
+    user_id: user.id,
     upload_id: id,
     environment,
     proposed_payload: journalEntry,
@@ -328,6 +333,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/qbo/preview
     .from('qbo_pushes')
     .select('id')
     .eq('upload_id', id)
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()

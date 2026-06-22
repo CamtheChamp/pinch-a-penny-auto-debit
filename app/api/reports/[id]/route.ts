@@ -1,23 +1,26 @@
 import type { NextRequest } from 'next/server'
 import { resolvePrerequisiteChain } from '@/lib/report-chain'
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id]'>) {
   const { id } = await ctx.params
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
 
   const [uploadRes, headerRes, itemsRes, totalRes] = await Promise.all([
-    db.from('pdf_uploads').select('*').eq('id', id).single(),
-    db.from('report_headers').select('*').eq('upload_id', id).single(),
-    db.from('line_items').select('*').eq('upload_id', id).order('sort_order'),
-    db.from('customer_totals').select('*').eq('upload_id', id).single(),
+    db.from('pdf_uploads').select('*').eq('id', id).eq('user_id', user.id).single(),
+    db.from('report_headers').select('*').eq('upload_id', id).eq('user_id', user.id).single(),
+    db.from('line_items').select('*').eq('upload_id', id).eq('user_id', user.id).order('sort_order'),
+    db.from('customer_totals').select('*').eq('upload_id', id).eq('user_id', user.id).single(),
   ])
 
   if (uploadRes.error) return Response.json({ error: 'Not found' }, { status: 404 })
 
   const upload = uploadRes.data
-  const prerequisiteChain = await resolvePrerequisiteChain(upload)
+  const prerequisiteChain = await resolvePrerequisiteChain(upload, user.id)
 
   // Resolve prerequisite report info if one is required
   let prerequisiteReport: { id: string; file_name: string; run_date: string } | null = null
@@ -37,6 +40,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
     .from('pdf_uploads')
     .select('id, file_name')
     .eq('prerequisite_upload_id', id)
+    .eq('user_id', user.id)
     .limit(1)
     .single()
   if (downstream) {
@@ -44,6 +48,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
       .from('report_headers')
       .select('run_date')
       .eq('upload_id', downstream.id)
+      .eq('user_id', user.id)
       .single()
     appliedToReport = {
       id: downstream.id,
@@ -74,22 +79,27 @@ export async function GET(_req: NextRequest, ctx: RouteContext<'/api/reports/[id
 
 export async function PATCH(req: NextRequest, ctx: RouteContext<'/api/reports/[id]'>) {
   const { id } = await ctx.params
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   const body = await req.json()
 
   // Allow updating line items (treatment, qbo fields, memo)
   if (body.lineItemUpdates) {
     for (const update of body.lineItemUpdates as Array<{ id: string; [k: string]: unknown }>) {
       const { id: itemId, ...fields } = update
-      await db.from('line_items').update(fields).eq('id', itemId)
+      await db.from('line_items').update(fields).eq('id', itemId).eq('user_id', user.id)
     }
   }
 
   // Allow updating upload status
   if (body.status) {
-    await db.from('pdf_uploads').update({ status: body.status }).eq('id', id)
+    await db.from('pdf_uploads').update({ status: body.status }).eq('id', id).eq('user_id', user.id)
   }
 
   await db.from('audit_logs').insert({
+    user_id: user.id,
     upload_id: id,
     event_type: 'manual_edit',
     payload: body,

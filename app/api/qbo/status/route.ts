@@ -1,13 +1,17 @@
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const { data } = await db
+  const supabase = await getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { data } = await supabase
     .from('qbo_connections')
     .select('realm_id, expires_at, environment')
-    .limit(1)
-    .single()
+    .eq('user_id', user.id)
+    .maybeSingle()
 
   if (!data) return Response.json({ connected: false })
 

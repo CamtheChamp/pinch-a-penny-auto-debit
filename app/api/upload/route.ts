@@ -1,12 +1,16 @@
 import { NextRequest } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 import { extractPdfText } from '@/lib/pdf-extract'
 import { parseReport } from '@/lib/parser'
 import { sameReportDate } from '@/lib/report-dates'
 
 export async function POST(req: NextRequest) {
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
   const form = await req.formData()
   const file = form.get('file')
   if (!file || typeof file === 'string') {
@@ -31,6 +35,7 @@ export async function POST(req: NextRequest) {
       .from('report_headers')
       .select('upload_id, run_date')
       .eq('report_number', parsed.header.reportNumber)
+      .eq('user_id', user.id)
     const existing = existingHeaders?.find((h: { upload_id: string; run_date: string | null }) =>
       sameReportDate(h.run_date, parsed.header?.runDate)
     )
@@ -52,6 +57,7 @@ export async function POST(req: NextRequest) {
     const { data: priorHeaders } = await db
       .from('report_headers')
       .select('upload_id, run_date')
+      .eq('user_id', user.id)
 
     const prior = priorHeaders?.find((h: { upload_id: string; run_date: string | null }) =>
       sameReportDate(h.run_date, prerequisiteDate)
@@ -63,6 +69,7 @@ export async function POST(req: NextRequest) {
   const { data: upload, error: uploadErr } = await db
     .from('pdf_uploads')
     .insert({
+      user_id: user.id,
       file_name: fileName,
       raw_text: rawText,
       parse_errors: parsed.parseErrors,
@@ -82,6 +89,7 @@ export async function POST(req: NextRequest) {
   // Insert header
   if (parsed.header) {
     await db.from('report_headers').insert({
+      user_id: user.id,
       upload_id: uploadId,
       report_number: parsed.header.reportNumber,
       run_date: parsed.header.runDate,
@@ -96,6 +104,7 @@ export async function POST(req: NextRequest) {
         .from('pdf_uploads')
         .select('id, prerequisite_date')
         .is('prerequisite_upload_id', null)
+        .eq('user_id', user.id)
       const resolvedWaiting = waiting?.filter((r: { id: string; prerequisite_date: string | null }) =>
         sameReportDate(r.prerequisite_date, parsed.header?.runDate)
       ) ?? []
@@ -112,6 +121,7 @@ export async function POST(req: NextRequest) {
   const { data: mappings } = await db
     .from('accounting_mappings')
     .select('*')
+    .eq('user_id', user.id)
     .order('priority', { ascending: false })
 
   // Insert line items
@@ -119,6 +129,7 @@ export async function POST(req: NextRequest) {
     const rows = parsed.lineItems.map((item, idx) => {
       const mapping = mappings ? findMapping(item, mappings) : null
       return {
+        user_id: user.id,
         upload_id: uploadId,
         sort_order: idx,
         customer_number: item.customerNumber,
@@ -151,6 +162,7 @@ export async function POST(req: NextRequest) {
   if (parsed.customerTotal) {
     const v = parsed.validation
     await db.from('customer_totals').insert({
+      user_id: user.id,
       upload_id: uploadId,
       open_amount: parsed.customerTotal.openAmount,
       discount_available: parsed.customerTotal.discountAvailable,
@@ -167,6 +179,7 @@ export async function POST(req: NextRequest) {
 
   // Audit log
   await db.from('audit_logs').insert({
+    user_id: user.id,
     upload_id: uploadId,
     event_type: 'upload',
     payload: {

@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
-import { db } from '@/lib/db'
+import { getServerSupabase } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +33,12 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  const supabase = await getServerSupabase()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return Response.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/login`)
+  }
+
   // Exchange authorization code for tokens
   const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')
   const tokenRes = await fetch(TOKEN_URL, {
@@ -60,15 +66,16 @@ export async function GET(req: NextRequest) {
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
   const refreshExpiresAt = new Date(Date.now() + tokens.x_refresh_token_expires_in * 1000).toISOString()
 
-  // Upsert into qbo_connections (single row, key = realm_id)
-  await db.from('qbo_connections').upsert({
+  // Upsert into qbo_connections (one row per tenant, key = user_id)
+  await supabase.from('qbo_connections').upsert({
+    user_id: user.id,
     realm_id: realmId,
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
     expires_at: expiresAt,
     refresh_expires_at: refreshExpiresAt,
     environment: process.env.QBO_ENVIRONMENT ?? 'sandbox',
-  }, { onConflict: 'realm_id' })
+  }, { onConflict: 'user_id' })
 
   return Response.redirect(`${process.env.NEXT_PUBLIC_APP_URL}/settings?qbo=connected`)
 }
