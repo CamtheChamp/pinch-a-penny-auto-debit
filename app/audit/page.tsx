@@ -19,9 +19,10 @@ const EVENT_BADGE: Record<string, string> = {
   qbo_push_error: 'bg-red-100 text-red-700',
   qbo_repush_success: 'bg-purple-100 text-purple-700',
   qbo_repush_error: 'bg-red-100 text-red-700',
+  report_deleted: 'bg-red-100 text-red-700',
 }
 
-const EVENT_TYPES = ['upload', 'manual_edit', 'qbo_push_success', 'qbo_push_error', 'qbo_repush_success', 'qbo_repush_error']
+const EVENT_TYPES = ['upload', 'manual_edit', 'qbo_push_success', 'qbo_push_error', 'qbo_repush_success', 'qbo_repush_error', 'report_deleted']
 
 export default async function AuditPage({
   searchParams,

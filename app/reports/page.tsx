@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getServerSupabase } from '@/lib/supabase-server'
 import PushToQboButton from '@/app/components/PushToQboButton'
+import DeleteReportButton from '@/app/components/DeleteReportButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -103,7 +104,10 @@ export default async function ReportsPage() {
                   </div>
                 )}
               </Link>
-              <PushToQboButton uploadId={r.id} />
+              <div className="mt-3 pt-3 border-t flex items-center justify-between">
+                <DeleteReportButton uploadId={r.id} fileName={r.file_name} />
+                <PushToQboButton uploadId={r.id} />
+              </div>
             </div>
           )
         })}

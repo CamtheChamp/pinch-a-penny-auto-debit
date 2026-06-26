@@ -89,7 +89,7 @@ export default function PushToQboButton({ uploadId }: { uploadId: string }) {
   }
 
   return (
-    <div className="mt-3 pt-3 border-t flex flex-col items-end gap-1">
+    <div className="flex flex-col items-end gap-1">
       <button
         onClick={push}
         disabled={pushing}

@@ -107,3 +107,33 @@ export async function PATCH(req: NextRequest, ctx: RouteContext<'/api/reports/[i
 
   return Response.json({ ok: true })
 }
+
+export async function DELETE(_req: NextRequest, ctx: RouteContext<'/api/reports/[id]'>) {
+  const { id } = await ctx.params
+  const db = await getServerSupabase()
+  const { data: { user } } = await db.auth.getUser()
+  if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { data: upload, error: lookupError } = await db
+    .from('pdf_uploads')
+    .select('id, file_name')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single()
+
+  if (lookupError || !upload) return Response.json({ error: 'Not found' }, { status: 404 })
+
+  // report_headers / line_items / customer_totals / qbo_pushes cascade-delete
+  // via their upload_id FK. audit_logs keeps its row with upload_id set null.
+  const { error } = await db.from('pdf_uploads').delete().eq('id', id).eq('user_id', user.id)
+  if (error) return Response.json({ error: error.message }, { status: 500 })
+
+  await db.from('audit_logs').insert({
+    user_id: user.id,
+    upload_id: null,
+    event_type: 'report_deleted',
+    payload: { uploadId: id, fileName: upload.file_name },
+  })
+
+  return Response.json({ ok: true })
+}

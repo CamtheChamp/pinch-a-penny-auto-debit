@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import AccountPicker, { type QboAccount } from '@/app/components/AccountPicker'
+import DeleteReportButton from '@/app/components/DeleteReportButton'
 
 interface Header {
   report_number: string
@@ -189,6 +190,7 @@ function JePreviewTable({ preview, fmt }: { preview: Record<string, unknown>; fm
 
 export default function ReportDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const id = params.id as string
   const [data, setData] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -326,6 +328,12 @@ export default function ReportDetailPage() {
             <span className={`text-xs px-2 py-1 rounded-full ${upload.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
               {upload.status}
             </span>
+            <DeleteReportButton
+              uploadId={upload.id}
+              fileName={upload.file_name}
+              onDeleted={() => router.push('/reports')}
+              className="text-red-500 hover:text-red-700 text-xs border border-red-200 rounded px-2 py-1 hover:bg-red-50 disabled:opacity-50"
+            />
           </div>
         </div>
 
