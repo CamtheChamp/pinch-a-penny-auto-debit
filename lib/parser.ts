@@ -320,7 +320,7 @@ function collectAmounts(tokens: string[]): number[] {
   const result: number[] = []
   for (const t of tokens) {
     const v = parseAmount(t)
-    if (v !== null && /^[\d,]+(\.\d+)?-?$/.test(t.trim())) {
+    if (v !== null && /^(?:\d[\d,]*(?:\.\d+)?|\.\d+)-?$/.test(t.trim())) {
       result.push(v)
     }
   }
@@ -336,7 +336,7 @@ function extractTrailingAmounts(
   for (const t of tokens) {
     if (result.length >= maxCount) break
     const v = parseAmount(t)
-    if (v !== null && /^[\d,]+(\.\d+)?-?$/.test(t.trim())) {
+    if (v !== null && /^(?:\d[\d,]*(?:\.\d+)?|\.\d+)-?$/.test(t.trim())) {
       result.push(v)
     }
   }
