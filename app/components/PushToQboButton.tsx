@@ -79,6 +79,7 @@ export default function PushToQboButton({ uploadId }: { uploadId: string }) {
       return
     }
     setPushing(false)
+    setAlreadyPushed(true)
     router.refresh()
   }
 
